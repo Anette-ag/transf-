@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: mi-app-transferencias
+    env: python
+    buildCommand: ""
+    startCommand: gunicorn app:app
+    plan: free
+    envVars:
+      - key: SECRET_KEY
+        value: b61558eadf7022be9d914dcdc112881f76ab4309f7641a6d407d234c5df920ea
+      - key: DATABASE_URL
+        value: sqlite:////tmp/database.db

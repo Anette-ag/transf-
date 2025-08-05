@@ -1,0 +1,40 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="container mt-5">
+  <div class="card shadow">
+    <div class="card-body">
+      <h2 class="card-title mb-4">Crear Nuevo Usuario</h2>
+
+      <!-- Formulario con token CSRF -->
+      <form method="post">
+        <!-- Token CSRF requerido por Flask-WTF -->
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="mb-3">
+          <label for="username" class="form-label">Usuario</label>
+          <input type="text" name="username" id="username" class="form-control" required>
+        </div>
+
+        <div class="mb-3">
+          <label for="password" class="form-label">Contraseña</label>
+          <input type="password" name="password" id="password" class="form-control" required>
+        </div>
+
+        <div class="mb-3">
+          <label for="confirm_password" class="form-label">Confirmar Contraseña</label>
+          <input type="password" name="confirm_password" id="confirm_password" class="form-control" required>
+        </div>
+
+        <div class="form-check mb-4">
+          <input type="checkbox" name="is_admin" class="form-check-input" id="is_admin">
+          <label class="form-check-label" for="is_admin">Administrador</label>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Crear Usuario</button>
+        <a href="{{ url_for('admin_usuarios') }}" class="btn btn-secondary ms-2">Cancelar</a>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,17 @@
+{% extends 'layout.html' %}
+{% block title %}Eliminar Transferencia{% endblock %}
+{% block content %}
+<h2 class="text-danger">¿Estás seguro que deseas eliminar esta transferencia?</h2>
+
+<ul>
+  <li><strong>Fecha:</strong> {{ transferencia.fecha }}</li>
+  <li><strong>Banco:</strong> {{ transferencia.banco }}</li>
+  <li><strong>Monto:</strong> ${{ "%.2f"|format(transferencia.monto) }}</li>
+  <li><strong>Referencia:</strong> {{ transferencia.referencia }}</li>
+</ul>
+
+<form method="post">
+  <button type="submit" class="btn btn-danger">Sí, eliminar</button>
+  <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Cancelar</a>
+</form>
+{% endblock %}

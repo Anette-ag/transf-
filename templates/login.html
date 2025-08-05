@@ -1,0 +1,46 @@
+{% extends "layout.html" %}
+
+{% block title %}Iniciar Sesión{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-6 col-lg-5">
+    <h3 class="text-center mb-4">Iniciar sesión</h3>
+    
+    <!-- Mostrar mensajes flash -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ 'danger' if category == 'error' else 'success' }} alert-dismissible fade show">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <form action="{{ url_for('login') }}" method="POST" class="p-4 border rounded bg-light shadow-sm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      
+      <div class="mb-3">
+        <label for="username" class="form-label">Usuario</label>
+        <input type="text" class="form-control" id="username" name="username" 
+               value="{{ request.form.username if request.form.username }}" required autofocus>
+      </div>
+      
+      <div class="mb-3">
+        <label for="password" class="form-label">Contraseña</label>
+        <input type="password" class="form-control" id="password" name="password" required>
+      </div>
+      
+      <div class="d-grid mt-4">
+        <button type="submit" class="btn btn-primary">Entrar</button>
+      </div>
+      
+      <div class="text-center mt-3">
+        <a href="{{ url_for('registro_usuario') }}">¿Nuevo usuario? Crear cuenta</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,55 @@
+{% extends 'layout.html' %}
+{% block title %}Subir Archivo Bancario{% endblock %}
+{% block content %}
+<div class="container">
+  <h2 class="my-4">Subir archivo de transferencias del banco</h2>
+
+  <!-- Mensajes flash -->
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ 'danger' if category == 'error' else 'success' }} alert-dismissible fade show">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <form method="post" enctype="multipart/form-data" class="border p-4 rounded bg-light">
+    <!-- Token CSRF CORRECTO -->
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    
+    <div class="mb-4">
+      <label for="archivo" class="form-label">Seleccione archivo (CSV o Excel)</label>
+      <input type="file" name="archivo" id="archivo" class="form-control" required accept=".csv,.xlsx,.xls">
+      <div class="form-text">Formatos aceptados: .csv, .xlsx (Tamaño máximo: 5MB)</div>
+    </div>
+
+    <div class="d-flex gap-2">
+      <button type="submit" class="btn btn-success">
+        <i class="bi bi-upload"></i> Subir y procesar
+      </button>
+      <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-x-circle"></i> Cancelar
+      </a>
+    </div>
+  </form>
+
+  {% if resultados %}
+  <div class="mt-4 p-3 border rounded">
+    <h4><i class="bi bi-list-check"></i> Resultado de la carga</h4>
+    <ul class="list-group">
+      <li class="list-group-item d-flex justify-content-between align-items-center">
+        Registradas nuevas
+        <span class="badge bg-success rounded-pill">{{ resultados.nuevas }}</span>
+      </li>
+      <li class="list-group-item d-flex justify-content-between align-items-center">
+        Duplicadas (omitidas)
+        <span class="badge bg-warning text-dark rounded-pill">{{ resultados.duplicadas }}</span>
+      </li>
+    </ul>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

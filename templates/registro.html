@@ -1,0 +1,86 @@
+{% extends 'layout.html' %}
+{% block title %}Registro{% endblock %}
+{% block content %}
+<div class="container">
+  <h2 class="my-4">Registrar Transferencia Manual</h2>
+
+  <!-- Mostrar mensajes flash -->
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ 'danger' if category == 'error' else 'success' }} alert-dismissible fade show">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <form method="post" action="{{ url_for('registro') }}" class="border p-4 rounded bg-light">
+    <!-- Token CSRF (IMPORTANTE) -->
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    
+    <!-- Campo oculto para usuario -->
+    <input type="hidden" name="registrado" value="{{ current_user.username }}">
+
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">Fecha</label>
+        <input name="fecha" type="date" class="form-control" required 
+               max="{{ datetime.now().strftime('%Y-%m-%d') }}">
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Banco</label>
+        <select name="banco" class="form-select" required>
+          <option value="">Selecciona un banco</option>
+          <option value="BBVA">BBVA</option>
+          <option value="Banamex">Banamex</option>
+          <option value="Santander">Santander</option>
+          <option value="Otro">Otro</option>
+        </select>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Monto</label>
+        <input name="monto" type="number" step="0.01" min="0.01" class="form-control" 
+               required placeholder="0.00">
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Referencia</label>
+        <input name="referencia" type="text" class="form-control" 
+               required pattern=".{8,}" title="Mínimo 8 caracteres">
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Pedido (opcional)</label>
+        <input name="pedido" type="text" class="form-control">
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Factura (opcional)</label>
+        <input name="factura" type="text" class="form-control">
+      </div>
+
+      <div class="col-12">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="esta_registrado" id="registradoCheck">
+          <label class="form-check-label" for="registradoCheck">
+            Ya está registrado en contabilidad
+          </label>
+        </div>
+      </div>
+
+      <div class="col-12 mt-4">
+        <button type="submit" class="btn btn-success me-2">
+          <i class="bi bi-save"></i> Guardar
+        </button>
+        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+          <i class="bi bi-arrow-left"></i> Volver
+        </a>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,62 @@
+{% extends 'layout.html' %}
+{% block title %}Editar Transferencia{% endblock %}
+{% block content %}
+<div class="container">
+  <h2 class="my-4">Editar Transferencia</h2>
+
+  <!-- Mostrar mensajes flash -->
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ 'danger' if category == 'error' else 'success' }} alert-dismissible fade show">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <form method="post" action="{{ url_for('editar', id=t.id) }}" class="border p-4 rounded bg-light">
+    <!-- Token CSRF (IMPORTANTE) -->
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">Pedido</label>
+        <input name="pedido" type="text" class="form-control" value="{{ t.pedido or '' }}"
+               placeholder="Número de pedido">
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Factura</label>
+        <input name="factura" type="text" class="form-control" value="{{ t.factura or '' }}"
+               placeholder="Número de factura">
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Registrado por</label>
+        <input name="registrado" type="text" class="form-control" value="{{ t.registrado }}" readonly>
+      </div>
+
+      <div class="col-md-6">
+        <div class="form-check form-switch pt-4">
+          <input class="form-check-input" type="checkbox" name="esta_registrado" id="registradoCheck"
+                 {% if t.esta_registrado %}checked{% endif %}>
+          <label class="form-check-label" for="registradoCheck">
+            Registrado en contabilidad
+          </label>
+        </div>
+      </div>
+
+      <div class="col-12 mt-4">
+        <button type="submit" class="btn btn-success me-2">
+          <i class="bi bi-save"></i> Guardar Cambios
+        </button>
+        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+          <i class="bi bi-arrow-left"></i> Volver
+        </a>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}
