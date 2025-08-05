@@ -35,6 +35,16 @@ ALLOWED_EXTENSIONS = {'csv', 'xlsx'}
 
 db = SQLAlchemy(app)
 
+# CREA /tmp/database.db si es necesario (solo en Render)
+if db_path.startswith('sqlite:////tmp/'):
+    db_file_path = '/tmp/database.db'
+    os.makedirs('/tmp', exist_ok=True)
+    if not os.path.exists(db_file_path):
+        print("Creando base de datos en /tmp/database.db")
+        with open(db_file_path, 'w'): pass
+        with app.app_context():
+            db.create_all()
+
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
