@@ -18,7 +18,12 @@ app.secret_key = os.getenv('SECRET_KEY', 'dev-secret')
 
 csrf = CSRFProtect(app)  # Después inicializas CSRFProtect con app
 
-db_path = os.getenv('DATABASE_URL', 'sqlite:///tmp/database.db')
+# Ruta por defecto para usar en local (instance/database.db)
+default_db_path = 'sqlite:///instance/database.db'
+
+# Si estás en Render, usará DATABASE_URL (por ejemplo: sqlite:////tmp/database.db)
+db_path = os.getenv('DATABASE_URL', default_db_path)
+
 app.config['SQLALCHEMY_DATABASE_URI'] = db_path
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['SESSION_COOKIE_SECURE'] = True
