@@ -11,55 +11,75 @@ import pandas as pd
 import os
 from functools import wraps
 from flask_wtf import CSRFProtect
+from flask_wtf.csrf import CSRFProtect
 
-app = Flask(__name__)  # Primero defines app
+# Inicialización de la aplicación
+app = Flask(__name__)
+app.secret_key = os.getenv('SECRET_KEY', 'Hidro8303') 
+csrf = CSRFProtect(app)
 
-app.secret_key = os.getenv('SECRET_KEY', 'dev-secret') 
+# Configuración de directorios base
+basedir = os.path.abspath(os.path.dirname(__file__))
 
-csrf = CSRFProtect(app)  # Después inicializas CSRFProtect con app
+# Configuración mejorada de la base de datos
+def configure_database():
+    """Configura la conexión a la base de datos según el entorno"""
+    if 'DATABASE_URL' in os.environ:
+        db_uri = os.environ['DATABASE_URL']
+        # Corrección para PostgreSQL en Render
+        if db_uri.startswith('postgres://'):
+            db_uri = db_uri.replace('postgres://', 'postgresql://', 1)
+        
+        # Configuración adicional para PostgreSQL en producción
+        app.config.update({
+            'SQLALCHEMY_ENGINE_OPTIONS': {
+                'pool_pre_ping': True,
+                'pool_recycle': 300,
+                'pool_size': 20,
+                'max_overflow': 30
+            }
+        })
+        print("Usando PostgreSQL en producción")
+        return db_uri
+    
+    # Configuración para desarrollo local (SQLite)
+    db_path = os.path.join(basedir, 'instance', 'database.db')
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    print("Usando SQLite localmente")
+    return f'sqlite:///{db_path}'
 
-# Ruta por defecto para usar en local (instance/database.db)
-default_db_path = 'sqlite:///instance/database.db'
+# Configuración principal de la aplicación
+app.config.update(
+    SQLALCHEMY_DATABASE_URI=configure_database(),
+    SQLALCHEMY_TRACK_MODIFICATIONS=False,
+    UPLOAD_FOLDER=os.path.join(basedir, 'uploads'),
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB límite para uploads
+    SESSION_COOKIE_SECURE=True,           # Solo HTTPS
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=1)
+)
 
-# Si estás en Render, usará DATABASE_URL (por ejemplo: sqlite:////tmp/database.db)
-db_path = os.getenv('DATABASE_URL', default_db_path)
+# Crear directorios necesarios
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(os.path.join(basedir, 'instance'), exist_ok=True)
 
-app.config['SQLALCHEMY_DATABASE_URI'] = db_path
-app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['SESSION_COOKIE_SECURE'] = True
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=1)
-
-ALLOWED_EXTENSIONS = {'csv', 'xlsx'}
-
+# Inicialización de extensiones
 db = SQLAlchemy(app)
-
-# CREA /tmp/database.db si es necesario (solo en Render)
-if db_path.startswith('sqlite:////tmp/'):
-    db_file_path = '/tmp/database.db'
-    os.makedirs('/tmp', exist_ok=True)
-    if not os.path.exists(db_file_path):
-        print("Creando base de datos en /tmp/database.db")
-        with open(db_file_path, 'w'): pass
-        with app.app_context():
-            db.create_all()
-
-login_manager = LoginManager()
-login_manager.init_app(app)
+login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 
-# Modelo de usuario mejorado con seguridad de contraseñas
+# Modelos de base de datos
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True)
-    password_hash = db.Column(db.String(128))
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password_hash = db.Column(db.String(128), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)
 
     @property
     def password(self):
-        raise AttributeError('password is not a readable attribute')
+        raise AttributeError('La contraseña no es un atributo legible')
 
     @password.setter
     def password(self, password):
@@ -79,7 +99,7 @@ class Transferencia(db.Model):
     factura = db.Column(db.String(100))
     registrado = db.Column(db.String(50))
     esta_registrado = db.Column(db.Boolean, default=False)
-    concepto = db.Column(db.String(200)) 
+    concepto = db.Column(db.String(200))
 
 class Venta(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -90,7 +110,7 @@ class Venta(db.Model):
     cantidad = db.Column(db.Float)
     usuario = db.Column(db.String(100))
     
-    codigo = db.Column(db.String(50)) 
+    codigo = db.Column(db.String(50))
     num = db.Column(db.String(50))
     no_fac = db.Column(db.String(50))
     no_nota = db.Column(db.String(50))
@@ -100,11 +120,38 @@ class Venta(db.Model):
     rfc_cte = db.Column(db.String(30))
     des_mon = db.Column(db.String(20))
 
+# Inicialización de la base de datos
+def init_db():
+    with app.app_context():
+        db.create_all()
+        # Crear usuario admin solo si no existe ninguno
+        if User.query.count() == 0:
+            admin = User(
+                username='admin',
+                is_admin=True
+            )
+            admin.password = os.getenv('ADMIN_PASSWORD', 'Hidro8303') 
+            db.session.add(admin)
+            db.session.commit()
+            print("Usuario admin creado")
+
+# Configuración para SQLite en Render (opcional)
+if app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite:////tmp/'):
+    db_file_path = '/tmp/database.db'
+    os.makedirs('/tmp', exist_ok=True)
+    if not os.path.exists(db_file_path):
+        with open(db_file_path, 'w'): pass
+        init_db()
+
+# Inicializar la base de datos al inicio
+init_db()
+
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
 
 def allowed_file(filename):
+    ALLOWED_EXTENSIONS = {'csv', 'xlsx'}
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def admin_required(f):
@@ -210,34 +257,74 @@ def nuevo_usuario():
 @admin_required
 def editar_usuario(id):
     usuario = User.query.get_or_404(id)
+    
     if request.method == 'POST':
-        usuario.username = request.form['username'].strip()
-        usuario.is_admin = 'is_admin' in request.form
-        
-        if request.form['password']:
-            if request.form['password'] != request.form.get('confirm_password'):
-                flash('Las contraseñas no coinciden', 'error')
+        try:
+            # Debug: Mostrar datos recibidos
+            app.logger.debug(f"Datos recibidos: {request.form}")
+            
+            # Validación de datos
+            username = request.form.get('username', '').strip()
+            if not username:
+                flash('El nombre de usuario es requerido', 'error')
                 return redirect(url_for('editar_usuario', id=id))
-            usuario.password = request.form['password']
-        
-        db.session.commit()
-        flash('Usuario actualizado correctamente.', 'success')
-        return redirect(url_for('admin_usuarios'))
-
+            
+            # Verificar si el username ya existe
+            if User.query.filter(User.username == username, User.id != id).first():
+                flash('Este nombre de usuario ya está en uso', 'error')
+                return redirect(url_for('editar_usuario', id=id))
+            
+            # Actualizar datos
+            usuario.username = username
+            usuario.is_admin = 'is_admin' in request.form
+            
+            # Manejar cambio de contraseña
+            new_password = request.form.get('password', '').strip()
+            if new_password:
+                confirm_password = request.form.get('confirm_password', '').strip()
+                
+                if len(new_password) < 6:
+                    flash('La contraseña debe tener al menos 6 caracteres', 'error')
+                    return redirect(url_for('editar_usuario', id=id))
+                
+                if new_password != confirm_password:
+                    flash('Las contraseñas no coinciden', 'error')
+                    return redirect(url_for('editar_usuario', id=id))
+                
+                usuario.password = new_password
+            
+            db.session.commit()
+            flash('Usuario actualizado correctamente', 'success')
+            return redirect(url_for('admin_usuarios'))
+            
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error al actualizar el usuario: {str(e)}', 'error')
+            app.logger.error(f"Error al editar usuario {id}: {str(e)}")
+            return redirect(url_for('editar_usuario', id=id))
+    
     return render_template('editar_usuario.html', usuario=usuario)
 
 @app.route('/admin/usuarios/eliminar/<int:id>', methods=['POST'])
 @login_required
 @admin_required
 def eliminar_usuario(id):
-    usuario = User.query.get_or_404(id)
-    if usuario.id == current_user.id:
-        flash('No puedes eliminar tu propio usuario.', 'error')
-        return redirect(url_for('admin_usuarios'))
+    try:
+        usuario = User.query.get_or_404(id)
+        
+        # Verificación de seguridad adicional
+        if usuario.id == current_user.id:
+            flash('No puedes eliminar tu propio usuario.', 'error')
+            return redirect(url_for('admin_usuarios'))
 
-    db.session.delete(usuario)
-    db.session.commit()
-    flash('Usuario eliminado correctamente.', 'success')
+        db.session.delete(usuario)
+        db.session.commit()
+        flash('Usuario eliminado correctamente.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error al eliminar usuario {id}: {str(e)}")
+        flash('Ocurrió un error al eliminar el usuario.', 'error')
+    
     return redirect(url_for('admin_usuarios'))
 
 
@@ -733,8 +820,29 @@ def filtrar_ventas():
 
     return render_template('dashboard.html', ventas=ventas)
 
+# Manejo de errores 500
+@app.errorhandler(500)
+def handle_500(error):
+    db.session.rollback()  # Previene bloqueos de la base de datos
+    return render_template('500.html'), 500
+
 if __name__ == '__main__':
-    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    # Configuración para producción/desarrollo
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_DEBUG', 'False') == 'True'
+    
+    # Inicialización de la base de datos
     with app.app_context():
         db.create_all()
-    app.run(host='0.0.0.0', port=5000, debug=True)
+        # Crear usuario admin si no existe
+        if User.query.count() == 0:
+            admin = User(
+                username='admin',
+                is_admin=True
+            )
+            admin.password = os.getenv('ADMIN_PASSWORD', 'admin123')
+            db.session.add(admin)
+            db.session.commit()
+            print("Usuario admin creado")
+    
+    app.run(host='0.0.0.0', port=port, debug=debug)
