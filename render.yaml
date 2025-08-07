@@ -2,11 +2,31 @@ services:
   - type: web
     name: transf-app
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    buildCommand: |
+      pip install -r requirements.txt
+      python -m pip install --upgrade pip
+    startCommand: gunicorn --worker-tmp-dir /dev/shm --workers 2 --threads 4 --worker-class gthread app:app
     plan: free
     envVars:
       - key: SECRET_KEY
         value: b61558eadf7022be9d914dcdc112881f76ab4309f7641a6d407d234c5df920ea
+      - key: ADMIN_PASSWORD
+        value: H1dr0*83Xy!9P2q 
+      - key: FLASK_DEBUG
+        value: "False"
+      - key: FLASK_ENV
+        value: "production"
       - key: DATABASE_URL
-        value: sqlite:////tmp/database.db
+        value: postgresql://user:password@transf-db/internal
+      - key: SQLALCHEMY_DATABASE_URI
+        value: ${DATABASE_URL}
+      - key: PYTHON_VERSION
+        value: "3.10.6"
+    healthCheckPath: /  
+
+  - type: database
+    name: transf-db
+    plan: free
+    engine: postgresql
+    ipAllowList:  
+      - 0.0.0.0/0  

@@ -1,36 +1,165 @@
 {% extends "layout.html" %}
 
 {% block content %}
-<h2 class="mb-4">Editar Usuario</h2>
+<div class="container">
+    <h2 class="mb-4">Editar Usuario</h2>
 
-<form method="post" class="row g-3">
-  <div class="col-md-6">
-    <label for="username" class="form-label">Usuario</label>
-    <input type="text" class="form-control" id="username" name="username" value="{{ usuario.username }}" required>
-  </div>
+    {# Mensajes flash mejorados #}
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ category }} alert-dismissible fade show mb-4">
+                    <i class="bi {% if category == 'success' %}bi-check-circle-fill{% else %}bi-exclamation-triangle-fill{% endif %} me-2"></i>
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
 
-  <div class="col-md-6 d-flex align-items-center mt-4">
-    <div class="form-check">
-      <input class="form-check-input" type="checkbox" id="is_admin" name="is_admin" {% if usuario.is_admin %}checked{% endif %}>
-      <label class="form-check-label" for="is_admin">
-        Administrador
-      </label>
-    </div>
-  </div>
+    <form method="post" class="row g-3 needs-validation" novalidate>
+        {# Token CSRF - esencial para seguridad #}
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        
+        {# Campo Usuario con validación #}
+        <div class="col-md-6">
+            <label for="username" class="form-label">Usuario*</label>
+            <input type="text" class="form-control" 
+                   id="username" name="username" value="{{ usuario.username }}" 
+                   pattern="[a-zA-Z0-9_]{3,20}" 
+                   title="Solo letras, números y guiones bajos (3-20 caracteres)" 
+                   required>
+            <div class="invalid-feedback">
+                Por favor ingrese un nombre de usuario válido (3-20 caracteres alfanuméricos)
+            </div>
+        </div>
 
-  <div class="col-md-6">
-    <label for="password" class="form-label">Nueva Contraseña (opcional)</label>
-    <input type="password" class="form-control" id="password" name="password">
-  </div>
+        {# Checkbox Administrador #}
+        <div class="col-md-6 d-flex align-items-center mt-md-4">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" 
+                       id="is_admin" name="is_admin" {% if usuario.is_admin %}checked{% endif %}>
+                <label class="form-check-label" for="is_admin">
+                    Usuario Administrador
+                </label>
+            </div>
+        </div>
 
-  <div class="col-md-6">
-    <label for="confirm_password" class="form-label">Confirmar Nueva Contraseña</label>
-    <input type="password" class="form-control" id="confirm_password" name="confirm_password">
-  </div>
+        {# Campo Contraseña con validación en tiempo real #}
+        <div class="col-md-6">
+            <label for="password" class="form-label">Nueva Contraseña (opcional)</label>
+            <div class="input-group">
+                <input type="password" class="form-control" 
+                       id="password" name="password" 
+                       minlength="6"
+                       aria-describedby="passwordHelp">
+                <button class="btn btn-outline-secondary toggle-password" type="button">
+                    <i class="bi bi-eye"></i>
+                </button>
+            </div>
+            <div id="passwordHelp" class="form-text">Mínimo 6 caracteres</div>
+            <div class="password-strength mt-2">
+                <div class="progress" style="height: 5px;">
+                    <div class="progress-bar" role="progressbar"></div>
+                </div>
+                <small class="text-muted">Fortaleza: <span class="strength-text">-</span></small>
+            </div>
+        </div>
 
-  <div class="col-12">
-    <button type="submit" class="btn btn-primary">Actualizar</button>
-    <a href="{{ url_for('admin_usuarios') }}" class="btn btn-outline-secondary">Cancelar</a>
-  </div>
-</form>
+        {# Campo Confirmar Contraseña con validación #}
+        <div class="col-md-6">
+            <label for="confirm_password" class="form-label">Confirmar Nueva Contraseña</label>
+            <div class="input-group">
+                <input type="password" class="form-control" 
+                       id="confirm_password" name="confirm_password">
+                <button class="btn btn-outline-secondary toggle-password" type="button">
+                    <i class="bi bi-eye"></i>
+                </button>
+            </div>
+            <div class="invalid-feedback">
+                Las contraseñas no coinciden
+            </div>
+        </div>
+
+        {# Botones de acción #}
+        <div class="col-12 mt-4">
+            <button type="submit" class="btn btn-primary me-2">
+                <i class="bi bi-save me-1"></i> Actualizar
+            </button>
+            <a href="{{ url_for('admin_usuarios') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-x-circle me-1"></i> Cancelar
+            </a>
+        </div>
+    </form>
+</div>
+
+{# Scripts para validación y mejoras UI #}
+<script>
+// Toggle para mostrar/ocultar contraseña
+document.querySelectorAll('.toggle-password').forEach(button => {
+    button.addEventListener('click', function() {
+        const input = this.previousElementSibling;
+        const icon = this.querySelector('i');
+        if (input.type === 'password') {
+            input.type = 'text';
+            icon.classList.replace('bi-eye', 'bi-eye-slash');
+        } else {
+            input.type = 'password';
+            icon.classList.replace('bi-eye-slash', 'bi-eye');
+        }
+    });
+});
+
+// Validación de contraseñas coincidentes
+const password = document.getElementById('password');
+const confirmPassword = document.getElementById('confirm_password');
+
+confirmPassword.addEventListener('input', function() {
+    if (password.value !== this.value && password.value) {
+        this.setCustomValidity("Las contraseñas no coinciden");
+        this.classList.add('is-invalid');
+    } else {
+        this.setCustomValidity("");
+        this.classList.remove('is-invalid');
+    }
+});
+
+// Indicador de fortaleza de contraseña
+password.addEventListener('input', function() {
+    const strengthBar = document.querySelector('.progress-bar');
+    const strengthText = document.querySelector('.strength-text');
+    let strength = 0;
+    const value = this.value;
+    
+    if (value.length > 0) strength += 1;
+    if (value.length >= 6) strength += 1;
+    if (/[A-Z]/.test(value)) strength += 1;
+    if (/\d/.test(value)) strength += 1;
+    if (/[^A-Za-z0-9]/.test(value)) strength += 1;
+    
+    const width = strength * 20;
+    const colors = ['danger', 'danger', 'warning', 'info', 'success'];
+    const texts = ['Muy débil', 'Débil', 'Moderada', 'Fuerte', 'Muy fuerte'];
+    
+    strengthBar.style.width = `${width}%`;
+    strengthBar.className = `progress-bar bg-${colors[strength-1]}`;
+    strengthText.textContent = texts[strength-1] || '-';
+    strengthText.className = `strength-text text-${colors[strength-1]}`;
+});
+
+// Validación de formulario Bootstrap
+(() => {
+  'use strict'
+  const forms = document.querySelectorAll('.needs-validation')
+  Array.from(forms).forEach(form => {
+    form.addEventListener('submit', event => {
+      if (!form.checkValidity()) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
+      form.classList.add('was-validated')
+    }, false)
+  })
+})()
+</script>
 {% endblock %}

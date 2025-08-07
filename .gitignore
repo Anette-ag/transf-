@@ -1,0 +1,89 @@
+# Entorno de desarrollo
+.env
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Archivos de IDE/Editores
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+._*
+Thumbs.db
+
+# Archivos de base de datos local
+instance/
+*.db
+*.sqlite
+*.sqlite3
+
+# Archivos subidos por usuarios
+uploads/
+
+# Archivos de logs y caché
+*.log
+logs/
+.pytest_cache/
+.cache/
+
+# Archivos de Jupyter Notebook
+.ipynb_checkpoints
+
+# Archivos de entorno de Python
+pip-selfcheck.json
+Pipfile
+Pipfile.lock
+poetry.lock
+pyproject.toml
+
+# Archivos de coverage
+.coverage
+htmlcov/
+
+# Archivos de documentación
+docs/_build/
+
+# Archivos de macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Archivos de Windows
+[Tt]humbs.db
+ehthumbs_vista.db
+
+# Archivos de Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# Archivos de Visual Studio Code
+.history
