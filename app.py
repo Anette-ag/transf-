@@ -34,14 +34,24 @@ os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
 # Helper: normalizar URI de Postgres y forzar SSL
 # -----------------------------
 def _ensure_postgres_uri(uri: str) -> str:
-    # normaliza postgres:// -> postgresql://
+    if not uri:
+        return uri
+
+    # Normaliza 'postgres://' -> 'postgresql://'
     fixed = uri.replace('postgres://', 'postgresql://', 1)
-    # fuerza driver psycopg (v3)
+
+    # Forzar driver psycopg2 (psycopg2-binary ya está en requirements)
+    # - Si venía con psycopg3: cámbialo
+    fixed = fixed.replace('postgresql+psycopg://', 'postgresql+psycopg2://', 1)
+    # - Si no traía driver, añádelo
     if fixed.startswith('postgresql://'):
-        fixed = fixed.replace('postgresql://', 'postgresql+psycopg://', 1)
-    # añade sslmode=require si falta
+        fixed = fixed.replace('postgresql://', 'postgresql+psycopg2://', 1)
+
+    # Asegurar sslmode=require si no está presente
     if 'sslmode=' not in fixed:
-        fixed += ('&' if '?' in fixed else '?') + 'sslmode=require'
+        sep = '&' if '?' in fixed else '?'
+        fixed = f"{fixed}{sep}sslmode=require"
+
     return fixed
 
 
