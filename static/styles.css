@@ -1,0 +1,8 @@
+body { font-family: system-ui, sans-serif; margin: 0; background:#fafafa; }
+.container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+.flash { padding: 10px; border-radius: 8px; margin: 8px 0; }
+.flash.error { background:#ffe5e5; }
+.flash.success { background:#e7ffe5; }
+.table { width:100%; border-collapse: collapse; }
+.table th, .table td { padding:8px; border-bottom:1px solid #eee; text-align:left; }
+button, .btn { padding:8px 12px; border:0; border-radius:8px; cursor:pointer; }
