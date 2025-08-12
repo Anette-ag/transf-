@@ -55,7 +55,9 @@ def configure_database() -> str:
     # Producción en Render con PostgreSQL administrado (recomendado)
     if db_url:
         print("Configuración: PostgreSQL en producción (Render)")
-        return _ensure_postgres_uri(db_url)
+        uri = _ensure_postgres_uri(db_url)
+        print(f"SQLAlchemy URI final => {uri}")
+        return uri
 
     # Render sin Postgres -> soporta SQLite en Disco Persistente si DATA_DIR está definido
     if os.environ.get('RENDER'):
