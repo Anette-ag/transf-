@@ -10,65 +10,100 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 import pandas as pd
 import os
 from functools import wraps
-from flask_wtf import CSRFProtect
-from flask_wtf.csrf import CSRFProtect
+from flask_wtf import CSRFProtect  # <- evita importarlo dos veces
 
+# -----------------------------
 # Inicialización de la aplicación
+# -----------------------------
 app = Flask(__name__)
-app.secret_key = os.getenv('SECRET_KEY', 'Hidro8303') 
+# Usa una SECRET_KEY fija desde entorno en producción para no invalidar sesiones en cada deploy
+app.secret_key = os.getenv('SECRET_KEY', 'cambia-esto-en-produccion')
 csrf = CSRFProtect(app)
 
+# -----------------------------
 # Configuración de directorios base
+# -----------------------------
 basedir = os.path.abspath(os.path.dirname(__file__))
+UPLOAD_FOLDER = os.path.join(basedir, 'uploads')
+LOCAL_DATA_DIR = os.path.join(basedir, 'data')
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
 
-# Configuración mejorada de la base de datos
-def configure_database():
-    """Configura la conexión a la base de datos según el entorno"""
-    if 'DATABASE_URL' in os.environ:
-        db_uri = os.environ['DATABASE_URL']
-        # Corrección para PostgreSQL en Render
-        if db_uri.startswith('postgres://'):
-            db_uri = db_uri.replace('postgres://', 'postgresql://', 1)
-        
-        # Configuración adicional para PostgreSQL en producción
-        app.config.update({
-            'SQLALCHEMY_ENGINE_OPTIONS': {
-                'pool_pre_ping': True,
-                'pool_recycle': 300,
-                'pool_size': 20,
-                'max_overflow': 30
-            }
-        })
-        print("Usando PostgreSQL en producción")
-        return db_uri
-    
-    # Configuración para desarrollo local (SQLite)
-    db_path = os.path.join(basedir, 'instance', 'database.db')
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    print("Usando SQLite localmente")
-    return f'sqlite:///{db_path}'
+# -----------------------------
+# Helper: normalizar URI de Postgres y forzar SSL
+# -----------------------------
+def _ensure_postgres_uri(uri: str) -> str:
+    fixed = uri.replace('postgres://', 'postgresql://', 1)
+    if 'sslmode=' not in fixed:
+        fixed += ('&' if '?' in fixed else '?') + 'sslmode=require'
+    return fixed
 
+# -----------------------------
+# Configuración mejorada de la base de datos con persistencia garantizada
+# -----------------------------
+def configure_database() -> str:
+    """Configura la conexión a la base de datos según el entorno (persistente en Render)."""
+    db_url = os.environ.get('DATABASE_URL')
+
+    # Producción en Render con PostgreSQL administrado (recomendado)
+    if db_url:
+        print("Configuración: PostgreSQL en producción (Render)")
+        return _ensure_postgres_uri(db_url)
+
+    # Render sin Postgres -> soporta SQLite en Disco Persistente si DATA_DIR está definido
+    if os.environ.get('RENDER'):
+        data_dir = os.environ.get('DATA_DIR')  # p. ej., /var/data montado como Disk
+        if data_dir:
+            os.makedirs(data_dir, exist_ok=True)
+            db_path = os.path.join(data_dir, 'database.db')
+            print(f"Configuración: SQLite en disco persistente de Render -> {db_path}")
+            return f"sqlite:///{db_path}"
+        # Evita usar filesystem efímero de Render
+        raise RuntimeError(
+            "Render detectado sin DATABASE_URL ni DATA_DIR. "
+            "Configura una base de datos Postgres o monta un Disk y define DATA_DIR."
+        )
+
+    # Desarrollo local con SQLite persistente
+    db_path = os.path.join(LOCAL_DATA_DIR, 'database.db')
+    print(f"Configuración: SQLite local con persistencia -> {db_path}")
+    return f"sqlite:///{db_path}"
+
+# -----------------------------
 # Configuración principal de la aplicación
+# -----------------------------
 app.config.update(
     SQLALCHEMY_DATABASE_URI=configure_database(),
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
-    UPLOAD_FOLDER=os.path.join(basedir, 'uploads'),
-    MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB límite para uploads
-    SESSION_COOKIE_SECURE=True,           # Solo HTTPS
+    SQLALCHEMY_ENGINE_OPTIONS={
+        'pool_pre_ping': True,
+        'pool_recycle': 300,
+        'pool_size': 10,
+        'max_overflow': 5,
+        'pool_timeout': 30,
+    },
+    UPLOAD_FOLDER=UPLOAD_FOLDER,
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB
+    SESSION_COOKIE_SECURE=True,   # Render sirve HTTPS
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
-    PERMANENT_SESSION_LIFETIME=timedelta(hours=1)
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=2),
+    SQLALCHEMY_ECHO=False,
+    SQLALCHEMY_RECORD_QUERIES=False,
+    PROPAGATE_EXCEPTIONS=True,
 )
 
-# Crear directorios necesarios
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-os.makedirs(os.path.join(basedir, 'instance'), exist_ok=True)
+# 🔹 Desactivar cookie segura si estás en modo debug local (HTTP sin HTTPS)
+if os.environ.get('FLASK_DEBUG') == 'True':
+    app.config['SESSION_COOKIE_SECURE'] = False
 
+
+# -----------------------------
 # Inicialización de extensiones
+# -----------------------------
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
-
 
 # Modelos de base de datos
 class User(UserMixin, db.Model):
@@ -120,32 +155,6 @@ class Venta(db.Model):
     rfc_cte = db.Column(db.String(30))
     des_mon = db.Column(db.String(20))
 
-# Inicialización de la base de datos
-def init_db():
-    with app.app_context():
-        db.create_all()
-        # Crear usuario admin solo si no existe ninguno
-        if User.query.count() == 0:
-            admin = User(
-                username='admin',
-                is_admin=True
-            )
-            admin.password = os.getenv('ADMIN_PASSWORD', 'Hidro8303') 
-            db.session.add(admin)
-            db.session.commit()
-            print("Usuario admin creado")
-
-# Configuración para SQLite en Render (opcional)
-if app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite:////tmp/'):
-    db_file_path = '/tmp/database.db'
-    os.makedirs('/tmp', exist_ok=True)
-    if not os.path.exists(db_file_path):
-        with open(db_file_path, 'w'): pass
-        init_db()
-
-# Inicializar la base de datos al inicio
-init_db()
-
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
@@ -162,6 +171,22 @@ def admin_required(f):
             return redirect(url_for('dashboard'))
         return f(*args, **kwargs)
     return decorated_function
+
+@app.before_first_request
+def initialize_database_if_needed():
+    """Se ejecuta al primer request (por worker). Idempotente."""
+    try:
+        db.create_all()
+        if User.query.count() == 0:
+            admin = User(username='admin', is_admin=True)
+            admin.password = os.getenv('ADMIN_PASSWORD', 'admin123')
+            db.session.add(admin)
+            db.session.commit()
+            app.logger.info("Usuario admin creado automáticamente.")
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error inicializando la BD: {e}")
+
 
 # Rutas de autenticación mejoradas
 @app.route('/', methods=['GET', 'POST'])
@@ -387,7 +412,7 @@ def registro():
             t = Transferencia(
                 fecha=request.form['fecha'],
                 banco=request.form['banco'],
-                monto=request.form['monto'],
+                monto=float(str(request.form['monto']).replace(',', '').strip() or 0),
                 referencia=ref,
                 pedido=request.form['pedido'],
                 factura=request.form['factura'],
@@ -532,6 +557,7 @@ def subir_archivo():
     return render_template('subir_archivo.html')
 
 @app.route('/transformar_excel', methods=['POST'])
+@login_required
 def transformar_excel():
     archivo = request.files.get('archivo_excel')
     if not archivo:
@@ -610,7 +636,9 @@ def transformar_excel():
 
     return send_file(output_path, as_attachment=True)
 
+
 @app.route('/transformar_excel_clasificado', methods=['POST'])
+@login_required
 def transformar_excel_clasificado():
     archivo = request.files.get('archivo_excel')
     if not archivo:
@@ -716,6 +744,7 @@ def transformar_excel_clasificado():
 
     return send_file(output_path, as_attachment=True)
 
+
 @app.route('/dashboard')
 @login_required
 def dashboard():
@@ -751,6 +780,7 @@ def dashboard():
 
 
 @app.route('/subir_ventas', methods=['POST'])
+@login_required
 def subir_ventas():
     archivo = request.files.get('archivo_excel')
     if not archivo:
@@ -761,33 +791,39 @@ def subir_ventas():
     df = pd.read_excel(archivo, header=None)
 
     # Asignar encabezados personalizados (agrega 'codigo' al principio)
-    columnas = ['codigo', 'Num', 'No_fac', 'Fecha', 'Cantidad', 'Tipo', 'No_nota', 'Subtipo',
-                'Cant', 'Cve_age', 'Nom_cte', 'Rfc_cte', 'Des_mon']
+    columnas = [
+        'codigo', 'Num', 'No_fac', 'Fecha', 'Cantidad', 'Tipo', 'No_nota', 'Subtipo',
+        'Cant', 'Cve_age', 'Nom_cte', 'Rfc_cte', 'Des_mon'
+    ]
     df.columns = columnas
 
     for _, fila in df.iterrows():
+        # Validar campos requeridos
         if pd.isna(fila['Fecha']) or pd.isna(fila['Cant']):
             continue
 
+        # Procesar fecha
         try:
             fecha = pd.to_datetime(fila['Fecha'], dayfirst=True, errors='raise').date()
         except Exception:
             continue
 
+        # Procesar cantidad
         try:
             cantidad = float(fila['Cant'])
-        except:
+        except Exception:
             continue
 
+        # Crear instancia de Venta
         venta = Venta(
             fecha=fecha,
-            concepto=str(fila.get('codigo', '')).strip(),  # ← o guarda en otro campo si prefieres
+            concepto=str(fila.get('codigo', '')).strip(),  # puedes cambiar a otro campo si lo prefieres
             tipo=str(fila.get('Tipo', '')).strip(),
             subtipo=str(fila.get('Subtipo', '')).strip(),
             cantidad=cantidad,
-            usuario=session.get('user_name'),
+            usuario=current_user.username,  # ahora guarda el usuario autenticado
 
-            codigo=str(fila.get('codigo', '')).strip(),  # columna A real
+            codigo=str(fila.get('codigo', '')).strip(),
             num=str(fila.get('Num', '')).strip(),
             no_fac=str(fila.get('No_fac', '')).strip(),
             no_nota=str(fila.get('No_nota', '')).strip(),
@@ -798,7 +834,13 @@ def subir_ventas():
             des_mon=str(fila.get('Des_mon', '')).strip()
         )
 
-        existe = Venta.query.filter_by(fecha=fecha, codigo=venta.codigo, cantidad=venta.cantidad).first()
+        # Evitar duplicados por fecha, código y cantidad
+        existe = Venta.query.filter_by(
+            fecha=fecha,
+            codigo=venta.codigo,
+            cantidad=venta.cantidad
+        ).first()
+
         if not existe:
             db.session.add(venta)
 
@@ -806,19 +848,15 @@ def subir_ventas():
     flash("Archivo de ventas cargado correctamente", "success")
     return redirect(url_for('dashboard') + '#tab-ventas')
 
-
-
-
 @app.route('/ventas')
+@login_required
 def filtrar_ventas():
     fecha_str = request.args.get('fecha')
     if fecha_str:
-        fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
-        ventas = Venta.query.filter_by(fecha=fecha).all()
-    else:
-        ventas = Venta.query.order_by(Venta.fecha.desc()).all()
+        # Pasa la fecha al dashboard como query param (si ahí filtras por fecha de ventas, ajústalo)
+        return redirect(url_for('dashboard', fecha=fecha_str) + '#tab-ventas')
+    return redirect(url_for('dashboard') + '#tab-ventas')
 
-    return render_template('dashboard.html', ventas=ventas)
 
 # Manejo de errores 500
 @app.errorhandler(500)
@@ -827,22 +865,7 @@ def handle_500(error):
     return render_template('500.html'), 500
 
 if __name__ == '__main__':
-    # Configuración para producción/desarrollo
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_DEBUG', 'False') == 'True'
-    
-    # Inicialización de la base de datos
-    with app.app_context():
-        db.create_all()
-        # Crear usuario admin si no existe
-        if User.query.count() == 0:
-            admin = User(
-                username='admin',
-                is_admin=True
-            )
-            admin.password = os.getenv('ADMIN_PASSWORD', 'admin123')
-            db.session.add(admin)
-            db.session.commit()
-            print("Usuario admin creado")
-    
     app.run(host='0.0.0.0', port=port, debug=debug)
+
