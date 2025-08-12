@@ -11,6 +11,7 @@ import pandas as pd
 import os
 from functools import wraps
 from flask_wtf import CSRFProtect  # <- evita importarlo dos veces
+from sqlalchemy.engine.url import make_url
 
 # -----------------------------
 # Inicialización de la aplicación
@@ -98,6 +99,14 @@ app.config.update(
     SQLALCHEMY_RECORD_QUERIES=False,
     PROPAGATE_EXCEPTIONS=True,
 )
+
+app.logger.info(f"DB URL -> {app.config['SQLALCHEMY_DATABASE_URI']}")
+try:
+    drv = make_url(app.config['SQLALCHEMY_DATABASE_URI']).drivername
+    app.logger.info(f"DB driver -> {drv}")
+except Exception as e:
+    app.logger.warning(f"No pude parsear DB URL: {e}")
+
 
 # 🔹 Desactivar cookie segura si estás en modo debug local (HTTP sin HTTPS)
 if os.environ.get('FLASK_DEBUG') == 'True':
