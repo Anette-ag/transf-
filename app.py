@@ -192,6 +192,85 @@ def allowed_file(filename):
     ALLOWED_EXTENSIONS = {'csv', 'xlsx'}
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+def _to_number(val):
+    try:
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return 0.0
+        s = str(val).replace('$','').replace(',','').strip()
+        return float(s)
+    except Exception:
+        return 0.0
+
+def es_ingreso(row: pd.Series) -> bool:
+    """
+    Devuelve True si la fila representa un INGRESO.
+    Detecta varios formatos:
+      - 'tipo' = ingreso/abono/deposito
+      - 'cargo/abono' = abono
+      - columnas separadas: 'cargo' y 'abono', o 'retiro' y 'deposito/depósito'
+      - palabras clave en 'movimiento'/'concepto'/'descripcion'
+      - fallback: importe/monto/cantidad > 0
+    """
+    # índices en minúsculas para evitar problemas de mayúsculas
+    idx = {str(c).strip().lower(): c for c in row.index}
+
+    def has(col): return col in idx
+    def get(col): return row[idx[col]] if has(col) else None
+
+    # 1) columna 'tipo'
+    if has('tipo'):
+        tipo = str(get('tipo') or '').strip().lower()
+        if tipo in ('ingreso', 'abono', 'depósito', 'deposito', 'dep', 'entrada'):
+            return True
+        if tipo in ('egreso', 'cargo', 'salida', 'retiro', 'pago'):
+            return False
+
+    # 2) columna 'cargo/abono'
+    if has('cargo/abono'):
+        ca = str(get('cargo/abono') or '').strip().lower()
+        if ca == 'abono':
+            return True
+        if ca == 'cargo':
+            return False
+
+    # 3) columnas separadas cargo/abono
+    if has('cargo') or has('abono'):
+        cargo = _to_number(get('cargo'))
+        abono = _to_number(get('abono'))
+        if abono > 0 and abs(cargo) == 0:
+            return True
+        if cargo > 0 and abono == 0:
+            return False
+        if abono > abs(cargo):
+            return True
+
+    # 4) columnas retiro/deposito
+    if has('retiro') or has('depósito') or has('deposito'):
+        retiro = _to_number(get('retiro'))
+        depo = _to_number(get('depósito')) if has('depósito') else _to_number(get('deposito'))
+        if depo > 0 and abs(retiro) == 0:
+            return True
+        if retiro > 0 and depo == 0:
+            return False
+
+    # 5) palabras clave en texto
+    for txtcol in ('movimiento', 'concepto', 'descripcion', 'descripción'):
+        if has(txtcol):
+            txt = str(get(txtcol) or '').lower()
+            if any(k in txt for k in ('abono', 'depósito', 'deposito', 'spei recibido', 'transferencia recibida')):
+                return True
+            if any(k in txt for k in ('cargo', 'retiro', 'pago', 'spei enviado', 'transferencia enviada')):
+                return False
+
+    # 6) fallback por signo del número
+    for numcol in ('importe', 'monto', 'cantidad'):
+        if has(numcol):
+            return _to_number(get(numcol)) > 0
+
+    # si no se pudo decidir, no lo tomamos
+    return False
+
+
 def admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -478,6 +557,7 @@ def subir_archivo():
                 df.columns = [col.strip().lower() for col in df.columns]
                 print("Encabezados normalizados:", df.columns)
 
+                # Alias comunes
                 if 'banco participante' in df.columns:
                     df.rename(columns={'banco participante': 'banco_participante'}, inplace=True)
 
@@ -488,8 +568,14 @@ def subir_archivo():
 
                 nuevas = 0
                 duplicadas = 0
+                saltadas_no_ingreso = 0
 
                 for _, row in df.iterrows():
+                    # --- SOLO INGRESOS ---
+                    if not es_ingreso(row):
+                        saltadas_no_ingreso += 1
+                        continue
+
                     referencia = str(row.get('referencia', '')).strip()
                     if not referencia or Transferencia.query.filter_by(referencia=referencia).first():
                         duplicadas += 1
@@ -518,7 +604,7 @@ def subir_archivo():
                             try:
                                 fecha = pd.to_datetime(raw_fecha, format=fmt).date().isoformat()
                                 break
-                            except:
+                            except Exception:
                                 continue
                         if not fecha:
                             fecha = pd.to_datetime(raw_fecha).date().isoformat()
@@ -527,9 +613,7 @@ def subir_archivo():
                         fecha = datetime.now().date().isoformat()
 
                     # Banco emisor
-                    banco = str(row.get('banco_participante', '')).strip()
-                    if not banco:
-                        banco = 'Desconocido'
+                    banco = str(row.get('banco_participante', '')).strip() or 'Desconocido'
 
                     # Banco receptor desde cuenta/clabe
                     cuenta = str(row.get('cuenta', '')).strip().replace("'", "")
@@ -551,10 +635,26 @@ def subir_archivo():
                         if banco_receptor != 'Desconocido':
                             break
 
-                    monto = float(row.get('importe', 0))
+                    # Monto (robusto según columnas disponibles)
+                    if 'importe' in df.columns:
+                        monto = _to_number(row.get('importe', 0))
+                    elif 'monto' in df.columns:
+                        monto = _to_number(row.get('monto', 0))
+                    elif 'abono' in df.columns:
+                        monto = _to_number(row.get('abono', 0))
+                    elif ('deposito' in df.columns) or ('depósito' in df.columns):
+                        monto = _to_number(row.get('deposito', row.get('depósito', 0)))
+                    else:
+                        monto = _to_number(row.get('cantidad', 0))
+
+                    # Seguridad extra: monto debe ser positivo si es ingreso
+                    if monto <= 0:
+                        saltadas_no_ingreso += 1
+                        continue
+
                     pedido = str(row.get('pedido', '')).strip()
                     factura = str(row.get('factura', '')).strip()
-                    concepto = str(row.get('concepto', '')).strip()  
+                    concepto = str(row.get('concepto', '')).strip()
 
                     t = Transferencia(
                         fecha=fecha,
@@ -566,14 +666,17 @@ def subir_archivo():
                         factura=factura,
                         registrado=current_user.username,
                         esta_registrado=False,
-                        concepto=concepto  
+                        concepto=concepto
                     )
 
                     db.session.add(t)
                     nuevas += 1
 
                 db.session.commit()
-                flash(f'Se procesó correctamente el archivo. Nuevas: {nuevas}, Duplicadas: {duplicadas}')
+                flash(
+                    f'Se procesó correctamente el archivo. '
+                    f'Nuevas: {nuevas}, Duplicadas: {duplicadas}, No ingresos descartados: {saltadas_no_ingreso}'
+                )
                 return redirect(url_for('dashboard'))
 
             except Exception as e:
@@ -584,6 +687,7 @@ def subir_archivo():
             flash('Archivo no válido. Solo se permiten archivos .csv o .xlsx')
 
     return render_template('subir_archivo.html')
+
 
 @app.route('/transformar_excel', methods=['POST'])
 @login_required
