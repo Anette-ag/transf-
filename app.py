@@ -62,31 +62,30 @@ def _ensure_postgres_uri(uri: str) -> str:
 # Configuración mejorada de la base de datos con persistencia garantizada
 # -----------------------------
 def configure_database() -> str:
-    """Configura la conexión a la base de datos según el entorno (persistente en Render)."""
+    """
+    Producción (Render):
+      - Si hay DATABASE_URL -> usa Postgres (con driver correcto + sslmode=require)
+      - Si NO hay DATABASE_URL pero existe PORT (señal de Render) -> ERROR (no usar SQLite)
+    Desarrollo local:
+      - Usa SQLite persistente en ./data/database.db
+    """
     db_url = os.environ.get('DATABASE_URL')
 
-    # Producción en Render con PostgreSQL administrado (recomendado)
+    # 1) Producción con DATABASE_URL
     if db_url:
         print("Configuración: PostgreSQL en producción (Render)")
         uri = _ensure_postgres_uri(db_url)
         print(f"SQLAlchemy URI final => {uri}")
         return uri
 
-    # Render sin Postgres -> soporta SQLite en Disco Persistente si DATA_DIR está definido
-    if os.environ.get('RENDER'):
-        data_dir = os.environ.get('DATA_DIR')  # p. ej., /var/data montado como Disk
-        if data_dir:
-            os.makedirs(data_dir, exist_ok=True)
-            db_path = os.path.join(data_dir, 'database.db')
-            print(f"Configuración: SQLite en disco persistente de Render -> {db_path}")
-            return f"sqlite:///{db_path}"
-        # Evita usar filesystem efímero de Render
+    # 2) Estamos en Render (si hay PORT) pero sin DATABASE_URL -> no permitir SQLite
+    if os.environ.get('PORT'):
         raise RuntimeError(
-            "Render detectado sin DATABASE_URL ni DATA_DIR. "
-            "Configura una base de datos Postgres o monta un Disk y define DATA_DIR."
+            "DATABASE_URL no está definida en el entorno de Render. "
+            "Ve a Settings → Environment y agrega DATABASE_URL con la cadena de conexión de Postgres."
         )
 
-    # Desarrollo local con SQLite persistente
+    # 3) Desarrollo local -> SQLite
     db_path = os.path.join(LOCAL_DATA_DIR, 'database.db')
     print(f"Configuración: SQLite local con persistencia -> {db_path}")
     return f"sqlite:///{db_path}"
