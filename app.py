@@ -12,6 +12,7 @@ import os
 from functools import wraps
 from flask_wtf import CSRFProtect  # <- evita importarlo dos veces
 from sqlalchemy.engine.url import make_url
+import sys
 
 # -----------------------------
 # Inicialización de la aplicación
@@ -33,24 +34,26 @@ os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
 # -----------------------------
 # Helper: normalizar URI de Postgres y forzar SSL
 # -----------------------------
+
 def _ensure_postgres_uri(uri: str) -> str:
     if not uri:
         return uri
 
-    # Normaliza 'postgres://' -> 'postgresql://'
+    # Normaliza postgres:// -> postgresql://
     fixed = uri.replace('postgres://', 'postgresql://', 1)
 
-    # Forzar driver psycopg2 (psycopg2-binary ya está en requirements)
-    # - Si venía con psycopg3: cámbialo
-    fixed = fixed.replace('postgresql+psycopg://', 'postgresql+psycopg2://', 1)
-    # - Si no traía driver, añádelo
-    if fixed.startswith('postgresql://'):
-        fixed = fixed.replace('postgresql://', 'postgresql+psycopg2://', 1)
+    # Elegir driver según Python: 3.13 usa psycopg (v3), 3.12 o menor usa psycopg2
+    prefer_driver = 'psycopg' if sys.version_info >= (3, 13) else 'psycopg2'
 
-    # Asegurar sslmode=require si no está presente
+    # Limpia cualquier driver previo y coloca el preferido
+    fixed = fixed.replace('postgresql+psycopg2://', 'postgresql://', 1)
+    fixed = fixed.replace('postgresql+psycopg://', 'postgresql://', 1)
+    if fixed.startswith('postgresql://'):
+        fixed = fixed.replace('postgresql://', f'postgresql+{prefer_driver}://', 1)
+
+    # sslmode=require si falta
     if 'sslmode=' not in fixed:
-        sep = '&' if '?' in fixed else '?'
-        fixed = f"{fixed}{sep}sslmode=require"
+        fixed += ('&' if '?' in fixed else '?') + 'sslmode=require'
 
     return fixed
 
