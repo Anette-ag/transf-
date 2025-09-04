@@ -95,10 +95,29 @@ def configure_database() -> str:
     return f"sqlite:///{db_path}"
 
 # -----------------------------
-# Configuración principal de la aplicación
+# Configuración principal de la aplicación - SIMPLIFICADA
 # -----------------------------
+
+# Obtén la URL directamente de la variable de entorno
+database_url = os.environ.get('DATABASE_URL')
+
+# DEBUG: Verificar qué URL se está usando
+print("=== DEBUG: DATABASE_URL ===")
+print("Variable de entorno DATABASE_URL:", os.environ.get('DATABASE_URL'))
+print("===========================")
+
+if database_url:
+    # PRODUCCIÓN: Usa PostgreSQL con Supabase
+    app.config['SQLALCHEMY_DATABASE_URI'] = _ensure_postgres_uri(database_url)
+    print(f"✅ Usando PostgreSQL: {app.config['SQLALCHEMY_DATABASE_URI']}")
+else:
+    # DESARROLLO LOCAL: Usa SQLite
+    db_path = os.path.join(LOCAL_DATA_DIR, 'database.db')
+    app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{db_path}"
+    print(f"⚠️  Usando SQLite local: {db_path}")
+
+# Resto de la configuración...
 app.config.update(
-    SQLALCHEMY_DATABASE_URI=configure_database(),
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
     SQLALCHEMY_ENGINE_OPTIONS={
         'pool_pre_ping': True,
@@ -118,22 +137,14 @@ app.config.update(
     PROPAGATE_EXCEPTIONS=True,
 )
 
-app.logger.info(f"DB URL -> {app.config['SQLALCHEMY_DATABASE_URI']}")
+# DEBUG: Verificar qué URL se configuró finalmente
+print("=== DEBUG: CONFIGURACIÓN FINAL ===")
+print("SQLALCHEMY_DATABASE_URI configurada:", app.config.get('SQLALCHEMY_DATABASE_URI'))
+print("===========================")
 
-try:
-    drv = make_url(app.config['SQLALCHEMY_DATABASE_URI']).drivername
-    app.logger.info(f"DB driver -> {drv}")
-except Exception as e:
-    app.logger.warning(f"No pude parsear DB URL: {e}")
-
-# 🔹 Desactivar cookie segura si estás en modo debug local (HTTP sin HTTPS)
-if os.environ.get('FLASK_DEBUG') == 'True':
-    app.config['SESSION_COOKIE_SECURE'] = False
-
-# -----------------------------
 # Inicialización de extensiones
-# -----------------------------
 db = SQLAlchemy(app)
+
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
