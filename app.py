@@ -125,7 +125,7 @@ def configure_database() -> str:
     return f"sqlite:///{db_path}"
 
 # -----------------------------
-# Configuración principal de la aplicación (con forzado IPv4)
+# Configuración principal de la aplicación (sin forzar IPv4)
 # -----------------------------
 database_url = os.environ.get('DATABASE_URL')
 
@@ -134,28 +134,8 @@ print("Variable DATABASE_URL:", _mask_url_safe(os.environ.get('DATABASE_URL', ''
 print("=========================================")
 
 if database_url:
-    # PRODUCCIÓN: PostgreSQL
+    # PRODUCCIÓN: PostgreSQL (normaliza driver y sslmode)
     uri = _ensure_postgres_uri(database_url)
-
-    # Forzar IPv4 si el host es Supabase u otro FQDN
-    try:
-        from sqlalchemy.engine.url import make_url
-        u = make_url(uri)
-        hostname = u.host
-    except Exception:
-        hostname = None
-
-    ipv4 = _resolve_ipv4(hostname) if hostname else None
-    if ipv4:
-        # libpq usará hostaddr (IPv4) para conectar, pero mantiene host para TLS/SNI
-        uri = _append_qs(uri, {
-            "hostaddr": ipv4,
-            "connect_timeout": 10,
-            "application_name": "render-app"
-        })
-        # También puedes setear PGHOSTADDR en Render en vez de tocar la URL:
-        # os.environ.setdefault('PGHOSTADDR', ipv4)
-
     app.config['SQLALCHEMY_DATABASE_URI'] = uri
     print(f"✅ Usando PostgreSQL: {_mask_url_safe(app.config['SQLALCHEMY_DATABASE_URI'])}")
 else:
@@ -168,7 +148,7 @@ app.config.update(
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
     SQLALCHEMY_ENGINE_OPTIONS={
         'pool_pre_ping': True,
-        'pool_recycle': 1800,   # subimos a 30 min para evitar sockets zombis
+        'pool_recycle': 1800,   # 30 min para evitar sockets zombis
         'pool_size': 10,
         'max_overflow': 5,
         'pool_timeout': 30,
@@ -188,6 +168,7 @@ print("=== DEBUG: CONFIGURACIÓN FINAL (enmascarada) ===")
 print("SQLALCHEMY_DATABASE_URI:", _mask_url_safe(app.config.get('SQLALCHEMY_DATABASE_URI', '')))
 print("================================================")
 
+
 # Inicialización de extensiones
 db = SQLAlchemy(app)
 
@@ -197,12 +178,17 @@ login_manager.login_view = 'login'
 # --- Healthcheck DB ---
 from sqlalchemy import text
 
+from sqlalchemy import text
+
 def db_ready() -> bool:
     try:
-        db.session.execute(text("SELECT 1"))
+        with db.engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
         return True
     except Exception:
+        app.logger.exception("DB no lista / error de conexión")
         return False
+
 
 # Modelos de base de datos
 class User(UserMixin, db.Model):
