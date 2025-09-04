@@ -125,24 +125,44 @@ def configure_database() -> str:
     return f"sqlite:///{db_path}"
 
 # -----------------------------
-# Configuración principal de la aplicación (sin forzar IPv4)
+# Configuración principal de la aplicación (forzando IPv4 cuando hay FQDN)
 # -----------------------------
-database_url = os.environ.get('DATABASE_URL')
-
 print("=== DEBUG: DATABASE_URL (enmascarada) ===")
 print("Variable DATABASE_URL:", _mask_url_safe(os.environ.get('DATABASE_URL', '')))
 print("=========================================")
 
-if database_url:
-    # PRODUCCIÓN: PostgreSQL (normaliza driver y sslmode)
-    uri = _ensure_postgres_uri(database_url)
+try:
+    raw_uri = configure_database()  # esta función ya normaliza driver y sslmode
+    from sqlalchemy.engine.url import make_url
+    u = make_url(raw_uri)
+    hostname = u.host
+
+    # Si hay hostname (no SQLite), intenta resolver IPv4
+    if hostname:
+        ipv4 = _resolve_ipv4(hostname)
+    else:
+        ipv4 = None
+
+    uri = raw_uri
+    if ipv4:
+        # Mantén 'host' para TLS/SNI y agrega 'hostaddr' para usar IPv4
+        uri = _append_qs(uri, {
+            "hostaddr": ipv4,
+            "connect_timeout": 10,
+            "application_name": "render-app"
+        })
+        # Alternativa sin tocar la URL:
+        # os.environ.setdefault("PGHOSTADDR", ipv4)
+
     app.config['SQLALCHEMY_DATABASE_URI'] = uri
     print(f"✅ Usando PostgreSQL: {_mask_url_safe(app.config['SQLALCHEMY_DATABASE_URI'])}")
-else:
-    # DESARROLLO LOCAL: SQLite
-    db_path = os.path.join(LOCAL_DATA_DIR, 'database.db')
-    app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{db_path}"
-    print(f"⚠️  Usando SQLite local: {db_path}")
+    if ipv4:
+        print(f"🔵 Resuelto IPv4 para {hostname}: {ipv4} (usando hostaddr)")
+
+except RuntimeError as e:
+    # Si estás en Render sin DATABASE_URL, esto falla a propósito
+    print(f"❌ Config DB: {e}")
+    raise
 
 app.config.update(
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
@@ -167,6 +187,7 @@ app.config.update(
 print("=== DEBUG: CONFIGURACIÓN FINAL (enmascarada) ===")
 print("SQLALCHEMY_DATABASE_URI:", _mask_url_safe(app.config.get('SQLALCHEMY_DATABASE_URI', '')))
 print("================================================")
+
 
 
 # Inicialización de extensiones
