@@ -35,30 +35,60 @@ LOCAL_DATA_DIR = os.path.join(basedir, 'data')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
 
-# -----------------------------
-# Helper: normalizar URI de Postgres y forzar SSL
-# -----------------------------
+import socket
+from urllib.parse import urlencode, parse_qsl
+
+def _mask_url_safe(u: str) -> str:
+    try:
+        from sqlalchemy.engine.url import make_url
+        uu = make_url(u)
+        if uu.password:
+            return str(uu._replace(password="***"))
+        return str(uu)
+    except Exception:
+        return u
+
+def _resolve_ipv4(hostname: str) -> str | None:
+    """Devuelve una IPv4 para hostname (prefiere AF_INET)."""
+    try:
+        infos = socket.getaddrinfo(hostname, None, family=socket.AF_INET, type=socket.SOCK_STREAM)
+        for fam, _, _, _, sockaddr in infos:
+            if fam == socket.AF_INET:
+                return sockaddr[0]
+    except Exception:
+        pass
+    return None
+
+def _append_qs(url: str, extra: dict) -> str:
+    """Añade/respeta query params en una URL SQLAlchemy-like."""
+    try:
+        from sqlalchemy.engine.url import make_url
+        u = make_url(url)
+        current_qs = dict(parse_qsl(u.query)) if u.query else {}
+        current_qs.update({k: v for k, v in extra.items() if v is not None})
+        new_query = urlencode(current_qs)
+        return str(u.set(query=new_query))
+    except Exception:
+        # Fallback tosco si fallara make_url
+        sep = '&' if '?' in url else '?'
+        return url + sep + urlencode(extra)
+
+
 def _ensure_postgres_uri(uri: str) -> str:
     if not uri:
         return uri
-    
-    # Normaliza postgres:// -> postgresql://
+
     fixed = uri.replace('postgres://', 'postgresql://', 1)
-    
-    # Elegir driver según Python: 3.13 usa psycopg (v3), 3.12 o menor usa psycopg2
+
     prefer_driver = 'psycopg' if sys.version_info >= (3, 13) else 'psycopg2'
-    
-    # Limpia cualquier driver previo y coloca el preferido
     fixed = fixed.replace('postgresql+psycopg2://', 'postgresql://', 1)
     fixed = fixed.replace('postgresql+psycopg://', 'postgresql://', 1)
-    
     if fixed.startswith('postgresql://'):
         fixed = fixed.replace('postgresql://', f'postgresql+{prefer_driver}://', 1)
-    
-    # sslmode=require si falta
+
     if 'sslmode=' not in fixed:
         fixed += ('&' if '?' in fixed else '?') + 'sslmode=require'
-    
+
     return fixed
 
 # -----------------------------
@@ -95,40 +125,57 @@ def configure_database() -> str:
     return f"sqlite:///{db_path}"
 
 # -----------------------------
-# Configuración principal de la aplicación - SIMPLIFICADA
+# Configuración principal de la aplicación (con forzado IPv4)
 # -----------------------------
-
-# Obtén la URL directamente de la variable de entorno
 database_url = os.environ.get('DATABASE_URL')
 
-# DEBUG: Verificar qué URL se está usando
-print("=== DEBUG: DATABASE_URL ===")
-print("Variable de entorno DATABASE_URL:", os.environ.get('DATABASE_URL'))
-print("===========================")
+print("=== DEBUG: DATABASE_URL (enmascarada) ===")
+print("Variable DATABASE_URL:", _mask_url_safe(os.environ.get('DATABASE_URL', '')))
+print("=========================================")
 
 if database_url:
-    # PRODUCCIÓN: Usa PostgreSQL con Supabase
-    app.config['SQLALCHEMY_DATABASE_URI'] = _ensure_postgres_uri(database_url)
-    print(f"✅ Usando PostgreSQL: {app.config['SQLALCHEMY_DATABASE_URI']}")
+    # PRODUCCIÓN: PostgreSQL
+    uri = _ensure_postgres_uri(database_url)
+
+    # Forzar IPv4 si el host es Supabase u otro FQDN
+    try:
+        from sqlalchemy.engine.url import make_url
+        u = make_url(uri)
+        hostname = u.host
+    except Exception:
+        hostname = None
+
+    ipv4 = _resolve_ipv4(hostname) if hostname else None
+    if ipv4:
+        # libpq usará hostaddr (IPv4) para conectar, pero mantiene host para TLS/SNI
+        uri = _append_qs(uri, {
+            "hostaddr": ipv4,
+            "connect_timeout": 10,
+            "application_name": "render-app"
+        })
+        # También puedes setear PGHOSTADDR en Render en vez de tocar la URL:
+        # os.environ.setdefault('PGHOSTADDR', ipv4)
+
+    app.config['SQLALCHEMY_DATABASE_URI'] = uri
+    print(f"✅ Usando PostgreSQL: {_mask_url_safe(app.config['SQLALCHEMY_DATABASE_URI'])}")
 else:
-    # DESARROLLO LOCAL: Usa SQLite
+    # DESARROLLO LOCAL: SQLite
     db_path = os.path.join(LOCAL_DATA_DIR, 'database.db')
     app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{db_path}"
     print(f"⚠️  Usando SQLite local: {db_path}")
 
-# Resto de la configuración...
 app.config.update(
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
     SQLALCHEMY_ENGINE_OPTIONS={
         'pool_pre_ping': True,
-        'pool_recycle': 300,
+        'pool_recycle': 1800,   # subimos a 30 min para evitar sockets zombis
         'pool_size': 10,
         'max_overflow': 5,
         'pool_timeout': 30,
     },
     UPLOAD_FOLDER=UPLOAD_FOLDER,
-    MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB
-    SESSION_COOKIE_SECURE=True,  # Render sirve HTTPS
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024,
+    SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
     PERMANENT_SESSION_LIFETIME=timedelta(hours=2),
@@ -137,16 +184,25 @@ app.config.update(
     PROPAGATE_EXCEPTIONS=True,
 )
 
-# DEBUG: Verificar qué URL se configuró finalmente
-print("=== DEBUG: CONFIGURACIÓN FINAL ===")
-print("SQLALCHEMY_DATABASE_URI configurada:", app.config.get('SQLALCHEMY_DATABASE_URI'))
-print("===========================")
+print("=== DEBUG: CONFIGURACIÓN FINAL (enmascarada) ===")
+print("SQLALCHEMY_DATABASE_URI:", _mask_url_safe(app.config.get('SQLALCHEMY_DATABASE_URI', '')))
+print("================================================")
 
 # Inicialización de extensiones
 db = SQLAlchemy(app)
 
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
+
+# --- Healthcheck DB ---
+from sqlalchemy import text
+
+def db_ready() -> bool:
+    try:
+        db.session.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
 
 # Modelos de base de datos
 class User(UserMixin, db.Model):
@@ -1096,6 +1152,11 @@ def admin_required(f):
 def initialize_database_if_needed():
     """Se ejecuta al primer request (por worker). Idempotente."""
     try:
+        # Evita romper el primer request si la BD aún no responde
+        if not db_ready():
+            app.logger.warning("DB no lista aún en first_request; se intentará en el siguiente request.")
+            return
+
         db.create_all()
         if User.query.count() == 0:
             admin = User(username='admin', is_admin=True)
@@ -1107,9 +1168,14 @@ def initialize_database_if_needed():
         db.session.rollback()
         app.logger.error(f"Error inicializando la BD: {e}")
 
+
 # Rutas de autenticación mejoradas
 @app.route('/', methods=['GET', 'POST'])
 def login():
+    # --- Healthcheck DB antes de tocar User.query ---
+    if not db_ready():
+        return "Base de datos no disponible, intenta en unos segundos.", 503
+
     if current_user.is_authenticated:
         return redirect(url_for('dashboard'))
     
@@ -1136,6 +1202,11 @@ def login():
 
 @app.route('/registro-usuario', methods=['GET', 'POST'])
 def registro_usuario():
+    # Healthcheck antes de cualquier query
+    if not db_ready():
+        return "Base de datos no disponible, intenta en unos segundos.", 503
+
+    # Si ya hay un usuario y no estás logeado, redirige a login
     if User.query.count() > 0 and not current_user.is_authenticated:
         flash("Ya existe un usuario registrado.")
         return redirect(url_for('login'))
@@ -1144,7 +1215,7 @@ def registro_usuario():
         username = request.form['username'].strip()
         password = request.form['password']
         confirm_password = request.form.get('confirm_password')
-        
+
         if not username or not password:
             flash('Todos los campos son requeridos', 'error')
         elif password != confirm_password:
@@ -1158,8 +1229,10 @@ def registro_usuario():
             db.session.commit()
             flash('Usuario creado exitosamente. Ahora puedes iniciar sesión.', 'success')
             return redirect(url_for('login'))
-    
+
     return render_template('registro_usuario.html')
+
+
 
 @app.route('/admin/usuarios')
 @login_required
@@ -1882,7 +1955,8 @@ def transformar_excel():
     df.columns = [col.strip() for col in df.columns]
     
     columnas_requeridas = [
-        "Cve_factu", "No_fac", "Num", "Fecha", "Cantidad", "Tipo", "No_nota", "Subtipo", "Cant", "Cve_age", "Nom_cte", "Rfc_cte", "Des_mon"
+        "Cve_factu", "No_fac", "Num", "Fecha", "Cantidad", "Tipo",
+        "No_nota", "Subtipo", "Cant", "Cve_age", "Nom_cte", "Rfc_cte", "Des_mon"
     ]
     
     if not all(col in df.columns for col in columnas_requeridas):
@@ -1902,7 +1976,8 @@ def transformar_excel():
     
     # Reordenar columnas
     columnas_orden = [
-        '', 'Num', 'No_fac', 'Fecha', 'Cantidad', 'Tipo', 'No_nota', 'Subtipo', 'Cant', 'Cve_age', 'Nom_cte', 'Rfc_cte', 'Des_mon'
+        '', 'Num', 'No_fac', 'Fecha', 'Cantidad', 'Tipo', 'No_nota',
+        'Subtipo', 'Cant', 'Cve_age', 'Nom_cte', 'Rfc_cte', 'Des_mon'
     ]
     df_final = df[columnas_orden].copy()
     
@@ -1915,7 +1990,8 @@ def transformar_excel():
     
     # Encabezados (con columna inicial sin título)
     encabezados = [
-        "", "Num", "No_fac", "Fecha", "Cantidad", "Tipo", "No_nota", "Subtipo", "Cant", "Cve_age", "Nom_cte", "Rfc_cte", "Des_mon"
+        "", "Num", "No_fac", "Fecha", "Cantidad", "Tipo", "No_nota",
+        "Subtipo", "Cant", "Cve_age", "Nom_cte", "Rfc_cte", "Des_mon"
     ]
     ws.append(encabezados)
     
@@ -1938,13 +2014,14 @@ def transformar_excel():
         for cell in row:
             cell.number_format = '@'
     
-    # Guardar archivo con timestamp
+    # Guardar archivo con timestamp (en UPLOAD_FOLDER)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"excel_transformado_{timestamp}.xlsx"
-    output_path = os.path.join("uploads", filename)
+    output_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     wb.save(output_path)
     
     return send_file(output_path, as_attachment=True)
+
 
 @app.route('/transformar_excel_clasificado', methods=['POST'])
 @login_required
@@ -1965,7 +2042,8 @@ def transformar_excel_clasificado():
         flash("El archivo no contiene todas las columnas requeridas", "error")
         return redirect(url_for('dashboard'))
     
-    df.insert(0, '', df['Cve_factu'].astype(str).str.strip() + df['No_fac'].astize(str).str.strip())
+    # FIX 1: astype (no astize)
+    df.insert(0, '', df['Cve_factu'].astype(str).str.strip() + df['No_fac'].astype(str).str.strip())
     
     for col in ['Nom_cte', 'Rfc_cte', 'Des_mon']:
         df[col] = df[col].astype(str).str.replace(r'\s+', ' ', regex=True).str.strip()
@@ -1995,7 +2073,8 @@ def transformar_excel_clasificado():
     
     df_final["Cant"] = pd.to_numeric(df_final["Cant"], errors='coerce').fillna(0)
     df_final["Cantidad"] = pd.to_numeric(df_final["Cantidad"], errors='coerce').fillna(0)
-    df_final["Tipo"] = df_final["Tipo"].astize(str).str.strip().str.upper()
+    # FIX 2: astype (no astize)
+    df_final["Tipo"] = df_final["Tipo"].astype(str).str.strip().str.upper()
     
     total_efectivo = df_final[df_final["Tipo"] == "EFECTIVO"]["Cantidad"].sum()
     
@@ -2039,13 +2118,14 @@ def transformar_excel_clasificado():
         cell.fill = azul_claro
         cell.font = Font(bold=True)
     
-    # Guardar archivo
+    # FIX 3: Guardar usando UPLOAD_FOLDER
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"excel_clasificado_{timestamp}.xlsx"
-    output_path = os.path.join("uploads", filename)
+    output_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     wb.save(output_path)
     
     return send_file(output_path, as_attachment=True)
+
 
 @app.route('/dashboard')
 @login_required
