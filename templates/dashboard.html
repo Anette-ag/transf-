@@ -1,242 +1,323 @@
-{% extends 'layout.html' %}
+{% extends 'layout.html' %} 
 
-{% block title %}Dashboard - Sistema de Transferencias{% endblock %}
+{% block title %}Dashboard - Sistema de Transferencias{% endblock %} 
 
-{% block content %}
+{% block content %} 
 <h2 class="mb-4">Bienvenido {{ current_user.username }}</h2>
 
-<!-- Mostrar mensajes flash -->
-{% with messages = get_flashed_messages(with_categories=true) %}
-  {% if messages %}
-    {% for category, message in messages %}
-      <div class="alert alert-{{ 'danger' if category == 'error' else 'success' }} alert-dismissible fade show mb-4">
-        {{ message }}
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-      </div>
-    {% endfor %}
-  {% endif %}
-{% endwith %}
-
-<!-- Tabs -->
-<ul class="nav nav-tabs mb-4" id="dashboardTabs">
-  <li class="nav-item">
-    <a class="nav-link active" data-bs-toggle="tab" href="#tab-transferencias">Transferencias Registradas</a>
+<!-- Tabs Navigation -->
+<ul class="nav nav-tabs mb-4" id="dashboardTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="transferencias-tab" data-bs-toggle="tab" data-bs-target="#tab-transferencias" type="button" role="tab" aria-controls="transferencias" aria-selected="true">
+      Transferencias
+    </button>
   </li>
-  <li class="nav-item">
-    <a class="nav-link" data-bs-toggle="tab" href="#tab-excel">Generar archivo Excel</a>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="excel-tab" data-bs-toggle="tab" data-bs-target="#tab-excel" type="button" role="tab" aria-controls="excel" aria-selected="false">
+      Generar Excel
+    </button>
   </li>
-  <li class="nav-item">
-    <a class="nav-link" data-bs-toggle="tab" href="#tab-ventas">Ventas Registradas</a>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="ventas-tab" data-bs-toggle="tab" data-bs-target="#tab-ventas" type="button" role="tab" aria-controls="ventas" aria-selected="false">
+      Ventas
+    </button>
   </li>
 </ul>
 
+<!-- Tab Content -->
 <div class="tab-content">
-  <!-- TAB 1: Transferencias -->
-  <div class="tab-pane fade show active" id="tab-transferencias">
-  <div class="mb-4 d-flex flex-wrap gap-2">
-    <a href="{{ url_for('registro') }}" class="btn btn-outline-primary">Registrar Transferencia</a>
-    <a href="{{ url_for('subir_archivo') }}" class="btn btn-outline-warning">Subir archivo de banco</a>
-    <form action="{{ url_for('eliminar_todas') }}" method="POST" onsubmit="return confirm('¿Seguro?')" class="d-inline">
+  <!-- Transferencias Tab -->
+  <div class="tab-pane fade show active" id="tab-transferencias" role="tabpanel" aria-labelledby="transferencias-tab">
+    <div class="mb-4 d-flex flex-wrap gap-2">
+      <a href="{{ url_for('registro') }}" class="btn btn-outline-primary">
+        <i class="bi bi-plus-circle"></i> Nueva Transferencia
+      </a>
+      <a href="{{ url_for('subir_archivo') }}" class="btn btn-outline-warning">
+        <i class="bi bi-upload"></i> Subir Archivo
+      </a>
+      <button class="btn btn-outline-success" data-bs-toggle="modal" data-bs-target="#modalSubirBancos">
+        <i class="bi bi-bank"></i> Subir Extracto
+      </button>
+
+      <!-- 🔹 NUEVO: Subida de Facturas/NC (autosubmit al elegir archivo) -->
+      <form action="{{ url_for('facturas_aplicar_a_transferencias') }}" method="POST" enctype="multipart/form-data" class="d-inline" id="formEmitidas">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label class="btn btn-outline-dark mb-0">
+          <i class="bi bi-journal-check"></i> Aplicar Facturas/NC
+          <input type="file" name="archivo_emitidas" accept=".xlsx,.xls" hidden required
+                 onchange="document.getElementById('formEmitidas').submit()">
+        </label>
+      </form>
+      <!-- 🔹 Fin nuevo bloque -->
+
+      {% if current_user.is_admin %}
+      <a href="{{ url_for('admin_usuarios') }}" class="btn btn-outline-info">
+        <i class="bi bi-people"></i> Usuarios
+      </a>
+      {% endif %}
+      <a href="{{ url_for('logout') }}" class="btn btn-outline-secondary ms-auto">
+        <i class="bi bi-box-arrow-right"></i> Salir
+      </a>
+    </div>
+    
+<!-- Botones de filtrado por banco receptor -->
+<div class="mb-3">
+  <div class="d-flex flex-wrap gap-2 align-items-center">
+    <span class="fw-bold">Filtrar por banco receptor:</span>
+    <a href="{{ url_for('dashboard') }}" class="btn btn-sm {% if not banco_receptor_activo %}btn-primary{% else %}btn-outline-primary{% endif %}">
+      Todos ({{ total_transferencias }})
+    </a>
+    {% for banco, count in bancos_ordenados %}
+    <a href="{{ url_for('dashboard', banco_receptor=banco) }}" class="btn btn-sm {% if banco_receptor_activo == banco %}btn-primary{% else %}btn-outline-primary{% endif %}">
+      {{ banco }} ({{ count }})
+    </a>
+    {% endfor %}
+  </div>
+</div>
+
+    
+    <form method="POST" action="{{ url_for('eliminar_todas') }}" class="d-inline" onsubmit="return confirm('¿Eliminar TODAS las transferencias? Esta acción no se puede deshacer.');">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button type="submit" class="btn btn-outline-danger">Eliminar todo</button>
+      <button type="submit" class="btn btn-outline-danger">
+        <i class="bi bi-trash3"></i> Eliminar todo
+      </button>
     </form>
-    {% if current_user.is_admin %}
-    <a href="{{ url_for('admin_usuarios') }}" class="btn btn-outline-info">Administrar Usuarios</a>
+
+    <!-- Filtros -->
+    <form method="GET" class="row g-3 mb-4">
+      <div class="col-md-3">
+        <input type="text" name="referencia" class="form-control" placeholder="Referencia" value="{{ request.args.get('referencia', '') }}">
+      </div>
+      <div class="col-md-2">
+        <input type="date" name="fecha" class="form-control" value="{{ request.args.get('fecha', '') }}">
+      </div>
+      <div class="col-md-2">
+        <select name="banco" class="form-select">
+          <option value="">Banco Origen</option>
+          <option value="BBVA" {% if request.args.get('banco')=='BBVA' %}selected{% endif %}>BBVA</option>
+          <option value="Banamex" {% if request.args.get('banco')=='Banamex' %}selected{% endif %}>Banamex</option>
+          <option value="Santander" {% if request.args.get('banco')=='Santander' %}selected{% endif %}>Santander</option>
+          <option value="Mercado Pago W" {% if request.args.get('banco')=='Mercado Pago W' %}selected{% endif %}>Mercado Pago</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <select name="banco_receptor" class="form-select">
+          <option value="">Banco Receptor</option>
+          <option value="SANTANDER" {% if request.args.get('banco_receptor')=='SANTANDER' %}selected{% endif %}>Santander</option>
+          <option value="BANAMEX" {% if request.args.get('banco_receptor')=='BANAMEX' %}selected{% endif %}>Banamex</option>
+          <option value="BBVA" {% if request.args.get('banco_receptor')=='BBVA' %}selected{% endif %}>BBVA</option>
+        </select>
+      </div>
+      <div class="col-md-3 d-flex gap-2">
+        <button type="submit" class="btn btn-primary flex-grow-1">
+          <i class="bi bi-search"></i> Buscar
+        </button>
+        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+          <i class="bi bi-arrow-counterclockwise"></i>
+        </a>
+      </div>
+    </form>
+
+    <!-- Tabla de Transferencias -->
+    {% if transferencias %}
+    <div class="table-responsive">
+      <table class="table table-hover table-bordered align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Fecha</th>
+            <th>Banco</th>
+            <th>Banco Receptor</th>
+            <th>Monto</th>
+            <th>Referencia</th>
+            <th>Concepto</th>
+            <th>Pedido</th>
+            <th>Factura</th>
+            <th>Registrado por</th>
+            <th>¿Registrado?</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in transferencias %}
+          <tr {% if t.esta_registrado %} class="table-success" {% elif t.concepto and t.concepto.startswith('[RECHAZADO]') %} class="table-danger" {% endif %} >
+            <td>{{ t.fecha if t.fecha and t.fecha != 'None' else 'N/A' }}</td>
+            <td>{{ t.banco }}</td>
+            <td>{{ t.banco_receptor }}</td>
+            <td>${{ "%.2f"|format(t.monto) }}</td>
+            <td>{{ t.referencia }}</td>
+            <td class="concepto-wrap" title="{{ t.concepto }}">{{ t.concepto }}</td>
+            <td>{{ t.pedido if t.pedido else '' }}</td>
+            <td>{{ t.factura if t.factura else '' }}</td>
+            <td>{{ t.registrado if t.registrado else '' }}</td>
+            <td>
+              <form method="POST" action="{{ url_for('toggle_registrado', id=t.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="checkbox" name="esta_registrado" {% if t.esta_registrado %}checked{% endif %} onchange="this.form.submit()" style="width: 18px; height: 18px; cursor: pointer;">
+              </form>
+            </td>
+            <td class="text-nowrap">
+              <a href="{{ url_for('editar', id=t.id) }}" class="btn btn-sm btn-outline-primary" title="Editar">
+                <i class="bi bi-pencil"></i>
+              </a>
+              <button class="btn btn-sm btn-outline-danger" title="Eliminar" data-bs-toggle="modal" data-bs-target="#confirmModal" data-id="{{ t.id }}">
+                <i class="bi bi-trash"></i>
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="alert alert-info">
+      No se encontraron transferencias con los filtros actuales.
+    </div>
     {% endif %}
-    <a href="{{ url_for('logout') }}" class="btn btn-outline-secondary">Cerrar sesión</a>
   </div>
 
-
-    <div class="card p-4 shadow-sm rounded bg-white">
-      <h4 class="mb-4">Transferencias registradas</h4>
-
-      <form method="GET" class="row g-3 align-items-end mb-4">
-        <div class="col-md-3">
-          <input type="text" name="referencia" class="form-control" placeholder="Buscar por referencia" value="{{ request.args.get('referencia', '') }}">
-        </div>
-        <div class="col-md-2">
-          <input type="date" name="fecha" class="form-control" value="{{ request.args.get('fecha', '') }}">
-        </div>
-        <div class="col-md-2">
-          <select name="banco" class="form-select">
-            <option value="">Bancos origen</option>
-            <option value="BBVA" {% if request.args.get('banco') == 'BBVA' %}selected{% endif %}>BBVA</option>
-            <option value="Banamex" {% if request.args.get('banco') == 'Banamex' %}selected{% endif %}>Banamex</option>
-            <option value="Santander" {% if request.args.get('banco') == 'Santander' %}selected{% endif %}>Santander</option>
-            <option value="BANORTE" {% if request.args.get('banco') == 'BANORTE' %}selected{% endif %}>BANORTE</option>
-            <option value="BAJIO" {% if request.args.get('banco') == 'BAJIO' %}selected{% endif %}>BAJIO</option>
-            <option value="Mercado Pago W" {% if request.args.get('banco') == 'Mercado Pago W' %}selected{% endif %}>Mercado Pago W</option>
-            <option value="Desconocido" {% if request.args.get('banco') == 'Desconocido' %}selected{% endif %}>Desconocido</option>
-          </select>
-        </div>
-        <div class="col-md-2">
-          <select name="banco_receptor" class="form-select">
-            <option value="">Bancos receptores</option>
-            <option value="SANTANDER" {% if request.args.get('banco_receptor') == 'SANTANDER' %}selected{% endif %}>SANTANDER</option>
-            <option value="BANAMEX" {% if request.args.get('banco_receptor') == 'BANAMEX' %}selected{% endif %}>BANAMEX</option>
-            <option value="BBVA" {% if request.args.get('banco_receptor') == 'BBVA' %}selected{% endif %}>BBVA</option>
-          </select>
-        </div>
-        <div class="col-md-1 d-grid">
-          <button type="submit" class="btn btn-outline-primary">Buscar</button>
-        </div>
-        <div class="col-md-2 d-grid">
-          <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">Quitar filtros</a>
-        </div>
-      </form>
-
-      {% if transferencias|length == 0 %}
-        <p class="text-muted">No se encontraron resultados.</p>
-      {% else %}
-        <div class="scroll-table-wrapper">
-          <div class="scroll-table-overflow">
-            <table class="table table-hover table-bordered align-middle mb-0 shadow-sm">
-              <thead class="table-light">
-                <tr>
-                  <th>Fecha</th>
-                  <th>Banco</th>
-                  <th>Banco Receptor</th>
-                  <th>Monto</th>
-                  <th>Referencia</th>
-                  <th>Concepto</th>
-                  <th>Pedido</th>
-                  <th>Factura</th>
-                  <th>Registrado por</th>
-                  <th class="text-center">¿Registrado?</th>
-                  <th>Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for t in transferencias %}
-                <tr {% if t.esta_registrado %}class="table-success"{% endif %}>
-                  <td>{{ t.fecha }}</td>
-                  <td>{{ t.banco }}</td>
-                  <td>{{ t.banco_receptor }}</td>
-                  <td>${{ "%.2f"|format(t.monto) }}</td>
-                  <td>{{ t.referencia }}</td>
-                  <td class="text-truncate" style="max-width: 200px;" title="{{ t.concepto }}">{{ t.concepto }}</td>
-                  <td class="text-truncate" style="max-width: 140px;" title="{{ t.pedido }}">{{ t.pedido }}</td>
-                  <td class="text-truncate" style="max-width: 140px;" title="{{ t.factura }}">{{ t.factura }}</td>
-                  <td>{{ t.registrado }}</td>
-                  <td class="text-center">
-                    <form method="POST" action="{{ url_for('toggle_registrado', id=t.id) }}">
-                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                      <input type="checkbox" name="esta_registrado" onchange="this.form.submit()" {% if t.esta_registrado %}checked{% endif %}>
-                    </form>
-                  </td>
-                  <td>
-                    <div class="d-flex flex-column gap-1">
-                      <a href="{{ url_for('editar', id=t.id) }}" class="btn btn-sm btn-outline-primary">Editar</a>
-                      <button class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#confirmModal" data-id="{{ t.id }}">
-                        Eliminar
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
+  <!-- Excel Tab -->
+  <div class="tab-pane fade" id="tab-excel" role="tabpanel" aria-labelledby="excel-tab">
+    <div class="row g-4">
+      <div class="col-md-6">
+        <div class="card h-100">
+          <div class="card-body">
+            <h5 class="card-title">Transformar Excel</h5>
+            <form action="{{ url_for('subir_ventas') }}" method="POST" enctype="multipart/form-data">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <div class="mb-3">
+                <label class="form-label">Archivo Excel</label>
+                <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls" required>
+              </div>
+              <button type="submit" class="btn btn-success w-100">
+                <i class="bi bi-file-earmark-excel"></i> Transformar
+              </button>
+            </form>
           </div>
         </div>
-      {% endif %}
-    </div>
-
-    <!-- Modal confirmación -->
-    <div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel" aria-hidden="true">
-      <div class="modal-dialog">
-        <div class="modal-content">
-          <form id="deleteForm" method="POST">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <div class="modal-header">
-              <h5 class="modal-title" id="confirmModalLabel">Confirmar eliminación</h5>
-              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
-            </div>
-            <div class="modal-body">
-              ¿Estás seguro de que deseas eliminar esta transferencia?
-            </div>
-            <div class="modal-footer">
-              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-              <button type="submit" class="btn btn-danger">Sí, eliminar</button>
-            </div>
-          </form>
+      </div>
+      <div class="col-md-6">
+        <div class="card h-100">
+          <div class="card-body">
+            <h5 class="card-title">Clasificar Excel</h5>
+            <form action="{{ url_for('transformar_excel_clasificado') }}" method="POST" enctype="multipart-form-data">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <div class="mb-3">
+                <label class="form-label">Archivo Excel</label>
+                <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls" required>
+              </div>
+              <button type="submit" class="btn btn-primary w-100">
+                <i class="bi bi-funnel"></i> Clasificar
+              </button>
+            </form>
+          </div>
         </div>
       </div>
     </div>
-
-    <script>
-      const confirmModal = document.getElementById('confirmModal');
-      confirmModal.addEventListener('show.bs.modal', function (event) {
-        const button = event.relatedTarget;
-        const transferenciaId = button.getAttribute('data-id');
-        const form = document.getElementById('deleteForm');
-        const csrfToken = document.querySelector('input[name="csrf_token"]').value;
-        form.action = '/eliminar/' + transferenciaId + '?csrf_token=' + csrfToken;
-      });
-    </script>
   </div>
 
-  <!-- TAB 2: Excel -->
-  <div class="tab-pane fade" id="tab-excel">
-    <div class="card p-4 shadow-sm rounded bg-white">
-      <h4 class="mb-3">Transformar archivo Excel</h4>
-      <form action="{{ url_for('transformar_excel') }}" method="POST" enctype="multipart/form-data">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="mb-3">
-          <label for="archivo_excel" class="form-label">Selecciona el archivo:</label>
-          <input type="file" class="form-control" name="archivo_excel" id="archivo_excel" accept=".xlsx" required>
+  <!-- Ventas Tab -->
+  <div class="tab-pane fade" id="tab-ventas" role="tabpanel" aria-labelledby="ventas-tab">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between align-items-center mb-4">
+          <h5 class="card-title mb-0">Registro de Ventas</h5>
+          <div class="d-flex gap-2">
+            <form method="GET" class="d-flex gap-2">
+              <input type="date" name="fecha_ventas" class="form-control" value="{{ request.args.get('fecha_ventas', '') }}">
+              <button type="submit" class="btn btn-secondary">
+                <i class="bi bi-filter"></i> Filtrar
+              </button>
+              <a href="{{ url_for('dashboard') }}#tab-ventas" class="btn btn-outline-secondary">
+                <i class="bi bi-x"></i>
+              </a>
+            </form>
+            <!-- Botón Eliminar todo -->
+            <form method="POST" action="{{ url_for('ventas_eliminar_todo') }}" class="d-inline ms-2" onsubmit="return confirm('¿Eliminar TODAS las ventas? Esta acción no se puede deshacer.');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-outline-danger">
+                <i class="bi bi-trash3"></i> Eliminar todo
+              </button>
+            </form>
+          </div>
         </div>
-        <button type="submit" class="btn btn-success">Subir y transformar</button>
-      </form>
-    </div>
 
-    <div class="card p-4 shadow-sm rounded bg-white mt-4">
-      <h4 class="mb-3">Transformar archivo Excel con clasificación</h4>
-      <form action="{{ url_for('transformar_excel_clasificado') }}" method="POST" enctype="multipart/form-data">
+        <!-- Upload Forms -->
+        <div class="row g-3 mb-4">
+          <div class="col-md-6">
+            <div class="card">
+              <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Subir Ventas</h6>
+                <form action="{{ url_for('subir_ventas') }}" method="POST" enctype="multipart/form-data">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <div class="mb-2">
+                    <div class="input-group">
+                      <!-- Acepta Excel normal y CSV de Mercado Pago -->
+                      <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls,.csv" required>
+                      <button type="submit" class="btn btn-success">
+                        <i class="bi bi-upload"></i>
+                      </button>
+                    </div>
+                    <div class="form-text">
+                      Puedes subir tu Excel de ventas (.xlsx/.csv).
+                    </div>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-6">
+  <div class="card">
+    <div class="card-body">
+      <h6 class="card-subtitle mb-2 text-muted">Subir HTO (Facturas Emitidas)</h6>
+      <form action="{{ url_for('ventas_upload_hto') }}" method="POST" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="mb-3">
-          <label for="archivo_excel_clasificado" class="form-label">Selecciona el archivo:</label>
-          <input type="file" class="form-control" name="archivo_excel" id="archivo_excel_clasificado" accept=".xlsx" required>
+        <div class="mb-2">
+          <div class="input-group">
+            <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls" required>
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-upload"></i>
+            </button>
+          </div>
+          <div class="form-text">
+            Sube aquí el Excel de HTO para complementar la información de ventas.
+          </div>
         </div>
-        <button type="submit" class="btn btn-primary">Subir y clasificar</button>
       </form>
     </div>
   </div>
+</div>
 
-  <!-- TAB 3: Ventas -->
-  <div class="tab-pane fade" id="tab-ventas">
-    <div class="card p-4 shadow-sm rounded bg-white">
-      <h4 class="mb-3">Ventas Registradas</h4>
+          <div class="col-md-6">
+            <div class="card">
+              <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Totales del Día</h6>
+                <div class="input-group">
+                  <input type="date" id="sumarFecha" class="form-control">
+                  <button id="btnSumarDia" class="btn btn-info">
+                    <i class="bi bi-calculator"></i> Calcular
+                  </button>
+                </div>
+                <div id="totalesDia" class="mt-2 small"></div>
+              </div>
+            </div>
+          </div>
+        </div>
 
-      <form action="{{ url_for('subir_ventas') }}" method="POST" enctype="multipart/form-data" class="mb-4">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <label class="form-label">Selecciona archivo de ventas (Excel):</label>
-        <input type="file" class="form-control mb-2" name="archivo_excel" accept=".xlsx" required>
-        <button type="submit" class="btn btn-success">Subir archivo de ventas</button>
-      </form>
-
-      <form method="GET" action="{{ url_for('filtrar_ventas') }}" class="mb-4">
-        <label class="form-label">Filtrar por fecha:</label>
-        <input type="date" name="fecha" class="form-control mb-2" value="{{ request.args.get('fecha', '') }}">
-        <button type="submit" class="btn btn-secondary">Buscar</button>
-        <a href="{{ url_for('dashboard') }}#tab-ventas" class="btn btn-outline-secondary ms-2">Quitar filtro</a>
-      </form>
-
-      {% if ventas|length == 0 %}
-        <p class="text-muted">No hay ventas registradas o no hay resultados para la búsqueda.</p>
-      {% else %}
+        <!-- Ventas Table Completa -->
+        {% if ventas %}
         <div class="table-responsive">
-          <table class="table table-bordered table-sm align-middle shadow-sm">
+          <table class="table table-sm table-hover">
             <thead class="table-light">
               <tr>
                 <th>Código</th>
                 <th>Num</th>
                 <th>No_fac</th>
                 <th>Fecha</th>
-                <th>Cantidad</th>
+                <th class="text-end">Cantidad</th>
                 <th>Tipo</th>
                 <th>No_nota</th>
                 <th>Subtipo</th>
-                <th>Cant</th>
+                <th class="text-end">Cant</th>
                 <th>Cve_age</th>
                 <th>Nom_cte</th>
                 <th>Rfc_cte</th>
@@ -246,26 +327,206 @@
             <tbody>
               {% for v in ventas %}
               <tr>
-                <td>{{ v.codigo }}</td>
-                <td>{{ v.num }}</td>
-                <td>{{ v.no_fac }}</td>
-                <td>{{ v.fecha }}</td>
-                <td>${{ '%.2f'|format(v.cantidad) }}</td>
-                <td>{{ v.tipo }}</td>
-                <td>{{ v.no_nota }}</td>
-                <td>{{ v.subtipo }}</td>
-                <td>{{ v.cant }}</td>
-                <td>{{ v.cve_age }}</td>
-                <td>{{ v.nom_cte }}</td>
-                <td>{{ v.rfc_cte }}</td>
-                <td>{{ v.des_mon }}</td>
+                <td>{{ v.codigo or '-' }}</td>
+                <td>{{ v.num or '-' }}</td>
+                <td>{{ v.no_fac or '-' }}</td>
+                <td>{{ v.fecha.strftime('%d/%m/%Y') if v.fecha else '-' }}</td>
+                <td class="text-end">${{ "%.2f"|format(v.cantidad) if v.cantidad else '0.00' }}</td>
+                <td>{{ v.tipo or '-' }}</td>
+                <td>{{ v.no_nota or '-' }}</td>
+                <td>{{ v.subtipo or '-' }}</td>
+                <td class="text-end">${{ "%.2f"|format(v.cant) if v.cant else '0.00' }}</td>
+                <td>{{ v.cve_age or '-' }}</td>
+                <td>{{ v.nom_cte or '-' }}</td>
+                <td>{{ v.rfc_cte or '-' }}</td>
+                <td>{{ v.des_mon or '-' }}</td>
               </tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
-      {% endif %}
+        {% else %}
+        <div class="alert alert-info">
+          No hay ventas registradas con los filtros actuales.
+        </div>
+        {% endif %}
+      </div>
     </div>
   </div>
 </div>
+
+<!-- Modals -->
+<div class="modal fade" id="modalSubirBancos" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form action="{{ url_for('subir_bancos') }}" method="POST" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header">
+          <h5 class="modal-title">Subir Extracto Bancario</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Seleccione archivo</label>
+            <input type="file" name="archivo_banco" class="form-control" accept=".xlsx,.xls,.csv" required>
+            <div class="form-text">
+              Formatos soportados: Mercado Pago, Banamex, BBVA
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Procesar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="deleteForm" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header">
+          <h5 class="modal-title">Confirmar Eliminación</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          ¿Está seguro que desea eliminar esta transferencia?
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-danger">Eliminar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- JavaScript -->
+<script>
+  // Tab Persistence
+  document.addEventListener('DOMContentLoaded', function() {
+    // Activate tab from hash
+    const activateTab = (hash) => {
+      const tabEl = document.querySelector(`#dashboardTabs button[data-bs-target="${hash}"]`);
+      if (tabEl) new bootstrap.Tab(tabEl).show();
+    };
+
+    // Initial tab activation
+    if (window.location.hash) {
+      activateTab(window.location.hash);
+    }
+
+    // Update hash when tab changes
+    document.querySelectorAll('#dashboardTabs button[data-bs-toggle="tab"]').forEach(tab => {
+      tab.addEventListener('shown.bs.tab', (e) => {
+        history.replaceState(null, '', e.target.dataset.bsTarget);
+      });
+    });
+
+    // Handle back/forward navigation
+    window.addEventListener('hashchange', () => {
+      if (window.location.hash) {
+        activateTab(window.location.hash);
+      }
+    });
+
+    // Delete modal handler
+    const confirmModal = document.getElementById('confirmModal');
+    if (confirmModal) {
+      confirmModal.addEventListener('show.bs.modal', function(e) {
+        const button = e.relatedTarget;
+        const transferId = button.dataset.id;
+        document.getElementById('deleteForm').action = `/eliminar/${transferId}`;
+      });
+    }
+
+    // Calculate daily totals
+    const btnSumar = document.getElementById('btnSumarDia');
+    if (btnSumar) {
+      btnSumar.addEventListener('click', async () => {
+        const fecha = document.getElementById('sumarFecha').value;
+        const panel = document.getElementById('totalesDia');
+        if (!fecha) {
+          panel.innerHTML = '<div class="alert alert-warning p-2">Seleccione una fecha</div>';
+          return;
+        }
+        
+        panel.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm"></div> Calculando...</div>';
+        
+        try {
+          const response = await fetch(`/ventas/sumar_dia?fecha=${encodeURIComponent(fecha)}`);
+          const data = await response.json();
+          
+          if (data.ok) {
+            const formatMoney = (amount) => {
+              return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(amount);
+            };
+            
+            let html = `<div class="alert alert-success p-2 mb-2">
+              <strong>Total del día:</strong> ${formatMoney(data.total_dia)}
+              <br><strong>Efectivo:</strong> ${formatMoney(data.total_efectivo)}
+            </div>
+            <div class="d-flex flex-wrap gap-3">`;
+            
+            for (const [categoria, monto] of Object.entries(data.desglose)) {
+              html += `<div class="flex-grow-1">
+                <div class="fw-bold">${categoria}</div>
+                <div>${formatMoney(monto)}</div>
+              </div>`;
+            }
+            
+            html += '</div>';
+            panel.innerHTML = html;
+          } else {
+            panel.innerHTML = `<div class="alert alert-danger p-2">${data.msg || 'Error al calcular'}</div>`;
+          }
+        } catch (error) {
+          panel.innerHTML = '<div class="alert alert-danger p-2">Error de conexión</div>';
+          console.error(error);
+        }
+      });
+    }
+  });
+</script>
+
+<style>
+  .table-responsive {
+    max-height: 65vh;
+    overflow-y: auto;
+  }
+  
+  .form-switch .form-check-input {
+    width: 2.5em;
+    height: 1.5em;
+  }
+  
+  /* Estilos para tabla de ventas completa */
+  #tab-ventas .table {
+    font-size: 0.85rem;
+  }
+  
+  #tab-ventas th {
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    background: white;
+  }
+  
+  #tab-ventas td {
+    vertical-align: middle;
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  
+  /* Mostrar el concepto completo con salto de línea */
+  .concepto-wrap {
+    white-space: normal; /* permite salto de línea */
+    word-break: break-word; /* corta palabras largas si es necesario */
+    max-width: 450px; /* opcional para no romper el layout */
+  }
+</style>
 {% endblock %}

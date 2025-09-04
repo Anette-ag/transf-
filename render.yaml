@@ -17,16 +17,16 @@ services:
       - key: FLASK_ENV
         value: "production"
       - key: DATABASE_URL
-        value: postgresql://user:password@transf-db/internal
+        value: "postgresql://postgres:[fF2fXuahXWYNggs8]@db.qjvtaxnxnkbwialndfiy.supabase.co:5432/postgres"  
       - key: SQLALCHEMY_DATABASE_URI
         value: ${DATABASE_URL}
       - key: PYTHON_VERSION
         value: "3.10.6"
-    healthCheckPath: /  
+    healthCheckPath: /   
 
-  - type: database
-    name: transf-db
-    plan: free
-    engine: postgresql
-    ipAllowList:  
-      - 0.0.0.0/0  
+#  - type: database
+#    name: transf-db
+#    plan: free
+#    engine: postgresql
+#    ipAllowList:  
+#      - 0.0.0.0/0  

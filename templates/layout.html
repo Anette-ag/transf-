@@ -7,200 +7,247 @@
   <title>{% block title %}Transferencias{% endblock %}</title>
 
   <!-- Google Fonts -->
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
   <!-- Bootstrap CSS -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 
   <!-- Bootstrap Icons -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
   
   <!-- SweetAlert2 CSS -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
 
-  <!-- Estilos locales -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-
   <style>
     :root {
-      --primary-color: #4A90E2;
-      --danger-color: #E74C3C;
-      --warning-color: #f39c12;
-      --success-color: #28a745;
+      --primary-color: #4e73df;
+      --secondary-color: #858796;
+      --success-color: #1cc88a;
+      --info-color: #36b9cc;
+      --warning-color: #f6c23e;
+      --danger-color: #e74a3b;
+      --light-color: #f8f9fc;
+      --dark-color: #5a5c69;
     }
     
     body {
       font-family: 'Inter', sans-serif;
-      background-color: #f2f4f7;
+      background-color: #f8f9fc;
       color: #2c3e50;
-      padding-top: 56px; /* Para el navbar fijo */
+      padding-top: 56px;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
     }
 
     .navbar {
       background-color: var(--primary-color);
-      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+      box-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15);
     }
 
     .navbar-brand {
       font-weight: 600;
-      color: white !important;
+      letter-spacing: 0.05rem;
     }
 
     .main-content {
-      margin-top: 2rem;
+      flex: 1;
+      padding: 1.5rem 0;
     }
 
-    .card-container {
-      background-color: #ffffff;
-      padding: 2rem;
-      border-radius: 0.75rem;
-      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
-      margin-bottom: 2rem;
+    /* Cards mejoradas */
+    .card {
+      border: none;
+      border-radius: 0.35rem;
+      box-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.1);
+      margin-bottom: 1.5rem;
     }
 
-    /* Botones principales */
+    .card-header {
+      background-color: #f8f9fc;
+      border-bottom: 1px solid #e3e6f0;
+      padding: 1rem 1.35rem;
+      font-weight: 600;
+    }
+
+    /* Botones */
+    .btn {
+      font-weight: 500;
+      border-radius: 0.35rem;
+      transition: all 0.15s;
+    }
+
+    .btn-sm {
+      padding: 0.25rem 0.5rem;
+      font-size: 0.875rem;
+    }
+
     .btn-primary {
       background-color: var(--primary-color);
-      border: none;
-    }
-    .btn-primary:hover {
-      background-color: #3d7ec6;
+      border-color: var(--primary-color);
     }
 
-    .btn-danger {
-      background-color: var(--danger-color);
-      border: none;
-    }
-    .btn-danger:hover {
-      background-color: #c0392b;
-    }
-
-    .btn-warning {
-      background-color: var(--warning-color);
-      border: none;
-      color: white;
-    }
-    .btn-warning:hover {
-      background-color: #d68910;
+    .btn-secondary {
+      background-color: var(--secondary-color);
+      border-color: var(--secondary-color);
     }
 
     .btn-success {
       background-color: var(--success-color);
-      border: none;
+      border-color: var(--success-color);
     }
 
-    /* Tablas responsivas */
-    .scroll-table-wrapper {
-      max-height: 480px;
-      border: 1px solid #dee2e6;
-      border-radius: 0.5rem;
-      margin-bottom: 1rem;
+    .btn-info {
+      background-color: var(--info-color);
+      border-color: var(--info-color);
     }
 
-    .scroll-table-overflow {
-      overflow-x: auto;
-      overflow-y: auto;
-      max-height: 480px;
-    }
-    
-    /* Efecto hover para celdas */
-    .table-hover tbody tr:hover {
-      background-color: #f0f8ff;
+    .btn-warning {
+      background-color: var(--warning-color);
+      border-color: var(--warning-color);
+      color: #1f2d3d;
     }
 
-    td {
-      max-width: 180px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      transition: background-color 0.2s ease;
+    .btn-danger {
+      background-color: var(--danger-color);
+      border-color: var(--danger-color);
     }
 
-    td:hover {
-      overflow: visible;
-      white-space: normal;
-      background-color: #f9f9f9;
-      position: relative;
-      z-index: 1;
+    /* Tablas */
+    .table {
+      margin-bottom: 0;
     }
 
-    /* Alertas mejoradas */
+    .table thead th {
+      border-bottom-width: 1px;
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.85rem;
+      letter-spacing: 0.05rem;
+      color: var(--secondary-color);
+    }
+
+    .table td, .table th {
+      padding: 0.75rem;
+      vertical-align: middle;
+    }
+
+    /* Alertas */
     .alert {
+      border-radius: 0.35rem;
       border: none;
-    }
-    .alert-success {
-      background-color: #d4edda;
-      color: #155724;
-    }
-    .alert-danger {
-      background-color: #f8d7da;
-      color: #721c24;
-    }
-    .alert-warning {
-      background-color: #fff3cd;
-      color: #856404;
+      padding: 1rem 1.5rem;
     }
 
-    /* Mejoras para móviles */
+    /* Tabs */
+    .nav-tabs .nav-link {
+      color: var(--secondary-color);
+      font-weight: 500;
+      border: none;
+      padding: 0.75rem 1.25rem;
+    }
+
+    .nav-tabs .nav-link.active {
+      color: var(--primary-color);
+      border-bottom: 2px solid var(--primary-color);
+      background-color: transparent;
+    }
+
+    /* Formularios */
+    .form-control, .form-select {
+      border-radius: 0.35rem;
+      padding: 0.5rem 0.75rem;
+    }
+
+    /* Responsividad */
     @media (max-width: 768px) {
-      .card-container {
-        padding: 1rem;
+      .navbar-brand {
+        font-size: 1rem;
       }
-      .scroll-table-wrapper {
-        max-height: none;
+      
+      .btn .d-none.d-md-inline {
+        display: none !important;
       }
     }
 
-    /* Tooltips */
-    .tooltip-inner {
-      max-width: 300px;
+    /* Scroll personalizado */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #f1f1f1;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #c1c1c1;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #a8a8a8;
     }
   </style>
+  
+  {% block extra_css %}{% endblock %}
 </head>
 <body>
 
   <!-- Navbar superior -->
-  <nav class="navbar navbar-expand-lg fixed-top navbar-dark">
-    <div class="container">
-      <a class="navbar-brand" href="{{ url_for('dashboard') }}">
-        <i class="bi bi-arrow-left-right me-2"></i>Sistema de Transferencias
+  <nav class="navbar navbar-expand-lg navbar-dark fixed-top shadow">
+    <div class="container-fluid px-4">
+      <a class="navbar-brand d-flex align-items-center" href="{{ url_for('dashboard') }}">
+        <i class="bi bi-arrow-left-right me-2"></i>
+        <span>Sistema de Transferencias</span>
       </a>
+      
       {% if current_user.is_authenticated %}
       <div class="d-flex align-items-center">
-        <span class="navbar-text me-3 d-none d-md-block">
+        <span class="navbar-text me-3 d-none d-md-inline">
           <i class="bi bi-person-circle me-1"></i>{{ current_user.username }}
         </span>
         <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm" 
            data-bs-toggle="tooltip" title="Cerrar sesión">
           <i class="bi bi-box-arrow-right"></i>
-          <span class="d-none d-md-inline">Salir</span>
+          <span class="d-none d-md-inline ms-1">Salir</span>
         </a>
       </div>
       {% endif %}
     </div>
   </nav>
 
-  <main class="container main-content">
+  <main class="container-fluid main-content px-4">
+    <!-- Sistema de alertas flash -->
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
-        <div class="alert-container">
-          {% for category, message in messages %}
-          <div class="alert alert-{{ category }} alert-dismissible fade show mb-3">
-            <i class="bi 
-              {% if category == 'success' %}bi-check-circle-fill
-              {% elif category == 'danger' %}bi-exclamation-octagon-fill
-              {% else %}bi-info-circle-fill{% endif %} me-2"></i>
-            {{ message }}
-            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Cerrar"></button>
+        <div class="row">
+          <div class="col-12">
+            {% for category, message in messages %}
+              {% set alert_class = {
+                'success': 'alert-success',
+                'error': 'alert-danger',
+                'warning': 'alert-warning',
+                'info': 'alert-info'
+              }.get(category, 'alert-primary') %}
+              
+              <div class="alert {{ alert_class }} alert-dismissible fade show mb-4">
+                <i class="bi 
+                  {% if category == 'success' %}bi-check-circle-fill
+                  {% elif category == 'error' %}bi-exclamation-octagon-fill
+                  {% elif category == 'warning' %}bi-exclamation-triangle-fill
+                  {% else %}bi-info-circle-fill{% endif %} me-2"></i>
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Cerrar"></button>
+              </div>
+            {% endfor %}
           </div>
-          {% endfor %}
         </div>
       {% endif %}
     {% endwith %}
 
-    <div class="card-container">
-      {% block content %}{% endblock %}
-    </div>
+    <!-- Contenido principal -->
+    {% block content %}{% endblock %}
   </main>
 
   <!-- Bootstrap Bundle + Popper -->
@@ -211,36 +258,66 @@
   
   <!-- Scripts globales -->
   <script>
-    // Función para confirmaciones
-    function confirmAction(event, message = '¿Estás seguro de realizar esta acción?') {
-      event.preventDefault();
-      const form = event.target.closest('form');
+    // Activar tooltips
+    document.addEventListener('DOMContentLoaded', function() {
+      // Tooltips
+      const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+      tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl, {
+          trigger: 'hover focus'
+        });
+      });
       
-      Swal.fire({
-        title: 'Confirmar',
-        text: message,
+      // Popovers
+      const popoverTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="popover"]'));
+      popoverTriggerList.map(function (popoverTriggerEl) {
+        return new bootstrap.Popover(popoverTriggerEl);
+      });
+    });
+
+    // Función global para confirmaciones
+    window.confirmAction = function(event, options = {}) {
+      event.preventDefault();
+      
+      const defaults = {
+        title: '¿Estás seguro?',
+        text: 'Esta acción no se puede deshacer',
         icon: 'warning',
-        showCancelButton: true,
-        confirmButtonColor: '#d33',
-        cancelButtonColor: '#3085d6',
         confirmButtonText: 'Sí, continuar',
         cancelButtonText: 'Cancelar',
+        showCancelButton: true,
+        confirmButtonColor: '#3085d6',
+        cancelButtonColor: '#d33',
         backdrop: true,
         allowOutsideClick: false
-      }).then((result) => {
-        if (result.isConfirmed) {
+      };
+      
+      const settings = {...defaults, ...options};
+      const form = event.target.closest('form');
+      
+      Swal.fire(settings).then((result) => {
+        if (result.isConfirmed && form) {
           form.submit();
         }
       });
-    }
+    };
 
-    // Activar tooltips
-    document.addEventListener('DOMContentLoaded', function() {
-      const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-      tooltipTriggerList.map(function (tooltipTriggerEl) {
-        return new bootstrap.Tooltip(tooltipTriggerEl);
-      });
-    });
+    // Función para mostrar notificaciones
+    window.showNotification = function(options) {
+      const defaults = {
+        title: '',
+        text: '',
+        icon: 'success',
+        timer: 3000,
+        showConfirmButton: false,
+        toast: true,
+        position: 'top-end'
+      };
+      
+      Swal.fire({...defaults, ...options});
+    };
   </script>
+  
+  {% block extra_js %}{% endblock %}
 </body>
 </html>
