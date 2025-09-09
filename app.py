@@ -2483,96 +2483,116 @@ def ventas_upload_hto():
         return redirect(url_for("dashboard") + "#tab-ventas")
 
     try:
-        import re
-        from unidecode import unidecode
-        from sqlalchemy import or_
+        import math
+        import numpy as np
 
-        # --- Leer y normalizar encabezados
+        def clean_str(x: object) -> str:
+            # Devuelve '' para NaN/None/'nan' y quita espacios
+            if x is None:
+                return ""
+            # pandas usa float NaN y también puede venir como numpy scalar
+            try:
+                import pandas as pd  # ya lo tienes importado globalmente
+                if isinstance(x, (float, np.floating)) and pd.isna(x):
+                    return ""
+            except Exception:
+                pass
+            s = str(x).strip()
+            return "" if s.lower() in ("nan", "none", "null") else s
+
+        def clean_float(x: object, default: float = 0.0) -> float:
+            try:
+                import pandas as pd
+                if x is None or (isinstance(x, (float, np.floating)) and pd.isna(x)):
+                    return float(default)
+                v = float(x)
+                if math.isnan(v) or math.isinf(v):
+                    return float(default)
+                return v
+            except Exception:
+                return float(default)
+
+        # 1) Leer Excel
         df = pd.read_excel(archivo)
-        def norm_hdr(s):
-            s = unidecode(str(s)).strip().lower()
-            s = re.sub(r"\(.*?\)", "", s)           # quita "(C3)" etc
-            s = re.sub(r"\s+", " ", s).strip()
-            s = s.replace(" ", "_")
-            return s
+        # Normaliza solo espacios alrededor
+        df.columns = [str(c).strip() for c in df.columns]
 
-        df.columns = [norm_hdr(c) for c in df.columns]
+        # 2) Renombrar columnas a nombres estándar, tolerando variantes
+        def rename_any(df, candidates, target):
+            targets = [t.lower() for t in candidates]
+            newcols = {}
+            for c in df.columns:
+                cl = c.strip().lower()
+                if cl in targets:
+                    newcols[c] = target
+                # iguala removiendo " (c3)" y acentos/espacios múltiples
+                else:
+                    base = cl.replace("(c3)", "").replace("(g3)", "").strip()
+                    if base in targets:
+                        newcols[c] = target
+            if newcols:
+                df.rename(columns=newcols, inplace=True)
 
-        # --- Helper para elegir columnas tolerantes
-        def pick(*candidates):
-            cands = [norm_hdr(c) for c in candidates]
-            # match exacto
-            for cand in cands:
-                for col in df.columns:
-                    if col == cand:
-                        return col
-            # match parcial (contiene)
-            for cand in cands:
-                for col in df.columns:
-                    if cand in col:
-                        return col
-            return None
-
-        # Campos posibles en HTO
-        col_serie       = pick("serie")
-        col_folio       = pick("folio", "no_fac", "numero", "num", "folio_factura")
-        col_uuid        = pick("uuid_factura", "uuid", "uuid_cfdi")
-        col_uuid_nc     = pick("uuid_nc", "uuid_relacion", "uuid_relacionado", "uuid_rel")
-        col_cliente_c3  = pick("cliente_c3", "nombre_receptor", "cliente", "nombre")
-        col_forma_pago  = pick("forma_de_pago_c3", "formadepago", "forma_de_pago")
-        col_metodo_pago = pick("metodo_de_pago_c3", "metodo_de_pago")
-        col_total_c3    = pick("total_c3", "total")
-        col_pago        = pick("pago", "pago_1")
-
-        if not (col_serie and col_folio):
-            flash("HTO: no se detectaron las columnas de Serie/Folio.", "error")
-            return redirect(url_for("dashboard") + "#tab-ventas")
+        rename_any(df, [
+            "serie"
+        ], "serie")
+        rename_any(df, [
+            "folio"
+        ], "folio")
+        rename_any(df, [
+            "uuid", "uuid factura", "uuid factura (c3)"
+        ], "uuid_factura")
+        rename_any(df, [
+            "uuid relacion", "uuid nc", "uuid nc (g3)", "uuid relacion (g3)"
+        ], "uuid_nc")
+        rename_any(df, [
+            "nombre receptor", "cliente (c3)"
+        ], "cliente_1")
+        rename_any(df, [
+            "formadepago", "forma de pago", "forma de pago (c3)"
+        ], "forma_de_pago")
+        rename_any(df, [
+            "metodo de pago", "método de pago", "método de pago (c3)", "metodo de pago (c3)"
+        ], "metodo_de_pago")
+        rename_any(df, [
+            "total", "total (c3)"
+        ], "total_2")
+        rename_any(df, [
+            "pago", "pago (c3)"
+        ], "pago_1")
 
         nuevos = 0
 
         for _, r in df.iterrows():
-            serie = str(r.get(col_serie, "")).strip()
-            folio = str(r.get(col_folio, "")).strip()
+            serie = clean_str(r.get("serie"))
+            folio = clean_str(r.get("folio"))
             if not serie or not folio:
                 continue
 
-            clave_codigo = (serie + folio).strip()
-
-            # Buscar primero por codigo == Serie+Folio; si no, por no_fac == Folio
-            venta = (Venta.query.filter(or_(Venta.codigo == clave_codigo,
-                                            Venta.no_fac == folio))
-                               .order_by(Venta.id.desc())  # por si hay más de una
-                               .first())
+            # Buscar la venta ya creada desde el "clasificado"
+            venta = Venta.query.filter(Venta.no_fac == (serie + folio)).first()
             if not venta:
                 continue
 
-            # Tomar valores del HTO
-            uuid_val   = str(r.get(col_uuid, "") or "").strip()
-            uuid_nc    = str(r.get(col_uuid_nc, "") or "").strip()
-            cliente_c3 = str(r.get(col_cliente_c3, "") or "").strip()
-            forma_pago = str(r.get(col_forma_pago, "") or "").strip()
-            metodo     = str(r.get(col_metodo_pago, "") or "").strip()
-            try:
-                total_c3   = float(_to_float(r.get(col_total_c3))) if col_total_c3 else 0.0
-            except Exception:
-                total_c3   = 0.0
-            pago_1     = str(r.get(col_pago, "") or "").strip() if col_pago else ""
-
-            # Rellenar solo si está vacío (autocompletar sin sobrescribir)
-            if not venta.uuid_factura and uuid_val:
-                venta.uuid_factura = uuid_val
-            if not venta.uuid_nc and uuid_nc:
-                venta.uuid_nc = uuid_nc
-            if not venta.cliente_1 and cliente_c3:
-                venta.cliente_1 = cliente_c3
-            if not venta.forma_de_pago and forma_pago:
-                venta.forma_de_pago = forma_pago
-            if not venta.metodo_de_pago and metodo:
-                venta.metodo_de_pago = metodo
-            if not venta.total_2 and total_c3:
-                venta.total_2 = total_c3
-            if not venta.pago_1 and pago_1:
-                venta.pago_1 = pago_1
+            # Rellenar SOLO si está vacío en la venta
+            if not venta.uuid_factura:
+                venta.uuid_factura = clean_str(r.get("uuid_factura"))
+            if not venta.uuid_nc:
+                venta.uuid_nc = clean_str(r.get("uuid_nc"))
+            if not venta.cliente_1:
+                venta.cliente_1 = clean_str(r.get("cliente_1"))
+            if not venta.forma_de_pago:
+                venta.forma_de_pago = clean_str(r.get("forma_de_pago"))
+            if not venta.metodo_de_pago:
+                venta.metodo_de_pago = clean_str(r.get("metodo_de_pago"))
+            if not venta.total_2 or venta.total_2 == 0:
+                venta.total_2 = clean_float(r.get("total_2"), 0.0)
+            if not venta.pago_1:
+                # Si viene numérico, guárdalo formateado como string; si está vacío, quedará ''
+                pago_val = r.get("pago_1")
+                # Si prefieres numérico en DB, cambia a un campo Float y usa clean_float
+                pago_clean = clean_str(pago_val)
+                venta.pago_1 = pago_clean
 
             nuevos += 1
 
@@ -2585,8 +2605,6 @@ def ventas_upload_hto():
         flash(f"Error al procesar HTO: {e}", "error")
 
     return redirect(url_for("dashboard") + "#tab-ventas")
-
-
 
 @app.route("/ventas/sumar_dia", methods=["GET"])
 @login_required
