@@ -145,7 +145,7 @@
             <td>{{ t.banco_receptor }}</td>
             <td>${{ "%.2f"|format(t.monto) }}</td>
             <td>{{ t.referencia }}</td>
-            <td class="concepto-wrap" title="{{ t.concepto }}">{{ t.concepto }}</td>
+            <td class="concepto-wrap" title="{{ t.concepto }}" data-bs-toggle="tooltip">{{ t.concepto }}</td>
             <td>{{ t.pedido if t.pedido else '' }}</td>
             <td>{{ t.factura if t.factura else '' }}</td>
             <td>{{ t.registrado if t.registrado else '' }}</td>
@@ -336,29 +336,29 @@
             <tbody>
               {% for v in ventas %}
               <tr>
-                <td>{{ v.codigo or '-' }}</td>
+                <td class="clip" data-bs-toggle="tooltip" title="{{ v.codigo or '-' }}">{{ v.codigo or '-' }}</td>
                 <td>{{ v.num or '-' }}</td>
                 <td>{{ v.no_fac or '-' }}</td>
                 <td>{{ v.fecha.strftime('%d/%m/%Y') if v.fecha else '-' }}</td>
                 <td class="text-end">${{ "%.2f"|format(v.cantidad or 0) }}</td>
-                <td>{{ v.tipo or '-' }}</td>
-                <td>{{ v.no_nota or '-' }}</td>
-                <td>{{ v.subtipo or '-' }}</td>
+                <td class="clip" data-bs-toggle="tooltip" title="{{ v.tipo or '-' }}">{{ v.tipo or '-' }}</td>
+                <td class="clip" data-bs-toggle="tooltip" title="{{ v.no_nota or '-' }}">{{ v.no_nota or '-' }}</td>
+                <td class="clip" data-bs-toggle="tooltip" title="{{ v.subtipo or '-' }}">{{ v.subtipo or '-' }}</td>
                 <td class="text-end">${{ "%.2f"|format(v.cant or 0) }}</td>
                 <td>{{ v.cve_age or '-' }}</td>
-                <td>{{ v.nom_cte or '-' }}</td>
-                <td>{{ v.rfc_cte or '-' }}</td>
+                <td class="clip" data-bs-toggle="tooltip" title="{{ v.nom_cte or '-' }}">{{ v.nom_cte or '-' }}</td>
+                <td class="clip" data-bs-toggle="tooltip" title="{{ v.rfc_cte or '-' }}">{{ v.rfc_cte or '-' }}</td>
                 <td>{{ v.des_mon or '-' }}</td>
                 <!-- Nuevos campos HTO -->
-                <td class="text-truncate" style="max-width: 200px">{{ v.uuid_factura or '-' }}</td>
-                <td class="text-truncate" style="max-width: 200px">{{ v.uuid_nc or '-' }}</td>
-                <td>{{ v.cliente_1 or '-' }}</td>
-                <td>{{ v.forma_de_pago or '-' }}</td>
-                <td>{{ v.metodo_de_pago or '-' }}</td>
+                <td class="clip" data-bs-toggle="tooltip" title="{{ v.uuid_factura or '-' }}">{{ v.uuid_factura or '-' }}</td>
+                <td class="clip" data-bs-toggle="tooltip" title="{{ v.uuid_nc or '-' }}">{{ v.uuid_nc or '-' }}</td>
+                <td class="clip" data-bs-toggle="tooltip" title="{{ v.cliente_1 or '-' }}">{{ v.cliente_1 or '-' }}</td>
+                <td class="clip" data-bs-toggle="tooltip" title="{{ v.forma_de_pago or '-' }}">{{ v.forma_de_pago or '-' }}</td>
+                <td class="clip" data-bs-toggle="tooltip" title="{{ v.metodo_de_pago or '-' }}">{{ v.metodo_de_pago or '-' }}</td>
                 <td class="text-end">
                   {% if v.total_2 is not none %}${{ "%.2f"|format(v.total_2) }}{% else %}-{% endif %}
                 </td>
-                <td>{{ v.pago_1 or '-' }}</td>
+                <td class="clip" data-bs-toggle="tooltip" title="{{ v.pago_1 or '-' }}">{{ v.pago_1 or '-' }}</td>
               </tr>
               {% endfor %}
             </tbody>
@@ -434,6 +434,15 @@
       if (tabEl) new bootstrap.Tab(tabEl).show();
     };
 
+    // Init/Reinit Bootstrap tooltips
+    const initTooltips = () => {
+      document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+        const t = bootstrap.Tooltip.getInstance(el);
+        if (t) t.dispose();
+        new bootstrap.Tooltip(el, { container: 'body', boundary: document.body });
+      });
+    };
+
     // Initial tab activation
     if (window.location.hash) {
       activateTab(window.location.hash);
@@ -443,6 +452,7 @@
     document.querySelectorAll('#dashboardTabs button[data-bs-toggle="tab"]').forEach(tab => {
       tab.addEventListener('shown.bs.tab', (e) => {
         history.replaceState(null, '', e.target.dataset.bsTarget);
+        initTooltips(); // reinit tooltips when switching tabs
       });
     });
 
@@ -509,6 +519,9 @@
         }
       });
     }
+
+    // Inicializa tooltips en el primer render
+    initTooltips();
   });
 </script>
 
@@ -537,9 +550,20 @@
   
   #tab-ventas td {
     vertical-align: middle;
-    max-width: 150px;
+  }
+
+  /* Celdas largas: trunca con … y muestra completo en tooltip */
+  #tab-ventas td.clip {
+    max-width: 220px;
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  @media (min-width: 1400px) {
+    #tab-ventas td.clip {
+      max-width: 300px;
+    }
   }
   
   /* Mostrar el concepto completo con salto de línea */
