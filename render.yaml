@@ -2,31 +2,44 @@ services:
   - type: web
     name: transf-app
     env: python
-    buildCommand: |
-      pip install -r requirements.txt
-      python -m pip install --upgrade pip
-    startCommand: gunicorn --worker-tmp-dir /dev/shm --workers 2 --threads 4 --worker-class gthread app:app
     plan: free
+
+    buildCommand: |
+      python -m pip install --upgrade pip
+      pip install -r requirements.txt
+
+    # 1 worker y pocos hilos para bajar RAM; más timeout para parseos grandes
+    startCommand: >
+      gunicorn app:app
+      -k gthread
+      --workers 1
+      --threads 2
+      --timeout 120
+      --graceful-timeout 120
+      --max-requests 200
+      --max-requests-jitter 50
+      --worker-tmp-dir /dev/shm
+
     envVars:
+      # ⚠️ Recomendado: mueve estos secretos al panel de Render (Environment) y bórralos del repo.
+      # Si los dejas aquí, al menos corrige el DATABASE_URL (sin corchetes) y quita espacios extra.
       - key: SECRET_KEY
-        value: b61558eadf7022be9d914dcdc112881f76ab4309f7641a6d407d234c5df920ea
+        value: REEMPLAZA_CON_UNA_CLAVE_LARGA
       - key: ADMIN_PASSWORD
-        value: H1dr0*83Xy!9P2q 
+        value: H1dr0*83Xy!9P2q
       - key: FLASK_DEBUG
         value: "False"
       - key: FLASK_ENV
         value: "production"
       - key: DATABASE_URL
-        value: "postgresql://postgres:[fF2fXuahXWYNggs8]@db.qjvtaxnxnkbwialndfiy.supabase.co:5432/postgres"  
-      - key: SQLALCHEMY_DATABASE_URI
-        value: ${DATABASE_URL}
+        # SIN corchetes en la contraseña y con tu host correcto (db.<ref>.supabase.co o el pooler)
+        # Ejemplo con host "db...supabase.co":
+        value: postgresql://postgres:TU_PASSWORD@db.TU_REF.supabase.co:5432/postgres
+      # ❌ Quita esta var para evitar confusión; tu app ya calcula la URI a partir de DATABASE_URL
+      # - key: SQLALCHEMY_DATABASE_URI
+      #   value: ${DATABASE_URL}
       - key: PYTHON_VERSION
         value: "3.10.6"
-    healthCheckPath: /   
 
-#  - type: database
-#    name: transf-db
-#    plan: free
-#    engine: postgresql
-#    ipAllowList:  
-#      - 0.0.0.0/0  
+    healthCheckPath: /
+
