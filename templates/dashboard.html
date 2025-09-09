@@ -175,45 +175,46 @@
     {% endif %}
   </div>
 
-  <!-- Excel Tab -->
-  <div class="tab-pane fade" id="tab-excel" role="tabpanel" aria-labelledby="excel-tab">
-    <div class="row g-4">
-      <div class="col-md-6">
-        <div class="card h-100">
-          <div class="card-body">
-            <h5 class="card-title">Transformar Excel</h5>
-            <form action="{{ url_for('subir_ventas') }}" method="POST" enctype="multipart/form-data">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <div class="mb-3">
-                <label class="form-label">Archivo Excel</label>
-                <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls" required>
-              </div>
-              <button type="submit" class="btn btn-success w-100">
-                <i class="bi bi-file-earmark-excel"></i> Transformar
-              </button>
-            </form>
-          </div>
+<!-- Excel Tab -->
+<div class="tab-pane fade" id="tab-excel" role="tabpanel" aria-labelledby="excel-tab">
+  <div class="row g-4">
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-body">
+          <h5 class="card-title">Transformar Excel</h5>
+          <form action="{{ url_for('subir_ventas') }}" method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3">
+              <label class="form-label">Archivo Excel</label>
+              <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls" required>
+            </div>
+            <button type="submit" class="btn btn-success w-100">
+              <i class="bi bi-file-earmark-excel"></i> Transformar
+            </button>
+          </form>
         </div>
       </div>
-      <div class="col-md-6">
-        <div class="card h-100">
-          <div class="card-body">
-            <h5 class="card-title">Clasificar Excel</h5>
-            <form action="{{ url_for('transformar_excel_clasificado') }}" method="POST" enctype="multipart-form-data">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <div class="mb-3">
-                <label class="form-label">Archivo Excel</label>
-                <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls" required>
-              </div>
-              <button type="submit" class="btn btn-primary w-100">
-                <i class="bi bi-funnel"></i> Clasificar
-              </button>
-            </form>
-          </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-body">
+          <h5 class="card-title">Clasificar Excel</h5>
+          <form action="{{ url_for('transformar_excel_clasificado') }}" method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3">
+              <label class="form-label">Archivo Excel</label>
+              <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls" required>
+            </div>
+            <button type="submit" class="btn btn-primary w-100">
+              <i class="bi bi-funnel"></i> Clasificar
+            </button>
+          </form>
         </div>
       </div>
     </div>
   </div>
+</div>
+
 
   <!-- Ventas Tab -->
   <div class="tab-pane fade" id="tab-ventas" role="tabpanel" aria-labelledby="ventas-tab">
