@@ -2483,15 +2483,13 @@ def ventas_upload_hto():
         return redirect(url_for("dashboard") + "#tab-ventas")
 
     try:
-        import re
-        import math
+        import re, math
         import numpy as np
         from unidecode import unidecode
         from sqlalchemy import or_
 
         # -------- Helpers anti-"nan" --------
         def clean_str(x) -> str:
-            """Convierte NaN/None/'nan' en cadena vacía y quita espacios."""
             if x is None:
                 return ""
             try:
@@ -2503,7 +2501,6 @@ def ventas_upload_hto():
             return "" if s.lower() in ("nan", "none", "null") else s
 
         def clean_float(x, default: float = 0.0) -> float:
-            """Convierte a float; NaN/None/inf -> default."""
             try:
                 if x is None or (isinstance(x, (float, np.floating)) and pd.isna(x)):
                     return float(default)
@@ -2529,12 +2526,10 @@ def ventas_upload_hto():
         # --- Helper para elegir columnas tolerantes
         def pick(*candidates):
             cands = [norm_hdr(c) for c in candidates]
-            # match exacto
             for cand in cands:
                 for col in df.columns:
                     if col == cand:
                         return col
-            # match parcial (cand contenido en col)
             for cand in cands:
                 for col in df.columns:
                     if cand in col:
@@ -2586,7 +2581,7 @@ def ventas_upload_hto():
             pago_1     = clean_str(r.get(col_pago)) if col_pago else ""
 
             # Autocompletar sin sobrescribir si ya hay dato
-            if not venda.uuid_factura and uuid_val:
+            if not venta.uuid_factura and uuid_val:
                 venta.uuid_factura = uuid_val
             if not venta.uuid_nc and uuid_nc:
                 venta.uuid_nc = uuid_nc
@@ -2612,6 +2607,7 @@ def ventas_upload_hto():
         flash(f"Error al procesar HTO: {e}", "error")
 
     return redirect(url_for("dashboard") + "#tab-ventas")
+
 
 
 
