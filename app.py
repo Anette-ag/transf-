@@ -19,6 +19,7 @@ import re
 import uuid
 from unidecode import unidecode
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
+from io import BytesIO
 
 # Inicialización de la aplicación
 app = Flask(__name__)
@@ -118,14 +119,14 @@ except RuntimeError as e:
 app.config.update(
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
     SQLALCHEMY_ENGINE_OPTIONS={
-        'pool_pre_ping': True,
-        'pool_recycle': 1800,
-        'pool_size': 10,
-        'max_overflow': 5,
-        'pool_timeout': 30,
-    },
+    'pool_pre_ping': True,
+    'pool_recycle': 1800,
+    'pool_size': 3,      # antes 10
+    'max_overflow': 2,   # antes 5
+    'pool_timeout': 30,
+},
     UPLOAD_FOLDER=UPLOAD_FOLDER,
-    MAX_CONTENT_LENGTH=16 * 1024 * 1024,
+    MAX_CONTENT_LENGTH=8 * 1024 * 1024,
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
@@ -1984,30 +1985,61 @@ def transformar_excel():
 @app.route('/transformar_excel_clasificado', methods=['POST'])
 @login_required
 def transformar_excel_clasificado():
-    archivo = request.files.get('archivo_excel')
-    if not archivo:
-        flash("No se subió ningún archivo", "error")
+    # 1) Recibir archivo con nombres alternativos
+    archivo = (request.files.get('archivo_excel')
+               or request.files.get('archivo')
+               or request.files.get('file'))
+    if not archivo or archivo.filename.strip() == "":
+        flash("No se subió ningún archivo. Revisa que el <form> tenga enctype='multipart/form-data' y el input se llame 'archivo_excel'.", "error")
+        app.logger.warning(f"[clasificado] request.files keys: {list(request.files.keys())}")
         return redirect(url_for('dashboard'))
-    
-    df = pd.read_excel(archivo)
-    df.columns = [col.strip() for col in df.columns]
-    
-    columnas_requeridas = [
-        "Cve_factu", "No_fac", "Num", "Fecha", "Cantidad", "Tipo", "No_nota", "Subtipo", "Cant", "Cve_age", "Nom_cte", "Rfc_cte", "Des_mon"
-    ]
-    
-    if not all(col in df.columns for col in columnas_requeridas):
-        flash("El archivo no contiene todas las columnas requeridas", "error")
+
+    # 2) Leer Excel
+    try:
+        df = pd.read_excel(archivo)
+    except Exception as e:
+        flash(f"No pude leer el Excel: {e}", "error")
         return redirect(url_for('dashboard'))
-    
-    # FIX 1: astype (no astize)
+
+    # 3) Normalizar encabezados (sin acentos, sin espacios raros)
+    from unidecode import unidecode
+    def norm_col(c):
+        s = unidecode(str(c)).replace("\xa0", " ").strip()
+        return s
+    df.columns = [norm_col(c) for c in df.columns]
+
+    # 4) Verificar / mapear columnas requeridas de forma tolerante
+    requeridas = ["Cve_factu", "No_fac", "Num", "Fecha", "Cantidad", "Tipo",
+                  "No_nota", "Subtipo", "Cant", "Cve_age", "Nom_cte", "Rfc_cte", "Des_mon"]
+
+    # índice auxiliar para ignorar espacios y mayúsculas
+    idx = {unidecode(str(c)).lower().replace(" ", ""): c for c in df.columns}
+    mapeo = {}
+    faltan = []
+    for r in requeridas:
+        key = unidecode(r).lower().replace(" ", "")
+        col_real = idx.get(key)
+        if col_real is None:
+            faltan.append(r)
+        else:
+            mapeo[r] = col_real
+
+    if faltan:
+        flash("El archivo no contiene todas las columnas requeridas: " + ", ".join(faltan), "error")
+        app.logger.warning(f"[clasificado] columnas detectadas: {list(df.columns)} | faltan: {faltan}")
+        return redirect(url_for('dashboard'))
+
+    # Renombrar a nombres “canónicos”
+    df = df.rename(columns=mapeo)
+
+    # ---------- Transformación (idéntica a la tuya, con pequeños fixes) ----------
     df.insert(0, '', df['Cve_factu'].astype(str).str.strip() + df['No_fac'].astype(str).str.strip())
-    
+
     for col in ['Nom_cte', 'Rfc_cte', 'Des_mon']:
         df[col] = df[col].astype(str).str.replace(r'\s+', ' ', regex=True).str.strip()
-    
+
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce').dt.strftime('%d/%m/%Y')
-    
+
     def clasificar(row):
         subtipo = str(row.get('Subtipo', '')).upper()
         if "CAJA 5MAYO" in subtipo:
@@ -2020,70 +2052,71 @@ def transformar_excel_clasificado():
             return "PENINSULA"
         else:
             return "OTROS MOVIMIENTOS"
-    
+
     df['__clasificacion_temp'] = df.apply(clasificar, axis=1)
-    
+
     columnas_orden = [
-        '', 'Num', 'No_fac', 'Fecha', 'Cantidad', 'Tipo', 'No_nota', 'Subtipo', 'Cant', 'Cve_age', 'Nom_cte', 'Rfc_cte', 'Des_mon'
+        '', 'Num', 'No_fac', 'Fecha', 'Cantidad', 'Tipo', 'No_nota',
+        'Subtipo', 'Cant', 'Cve_age', 'Nom_cte', 'Rfc_cte', 'Des_mon'
     ]
     df_final = df[columnas_orden + ['__clasificacion_temp']].copy()
     df_final = df_final[~df_final["Subtipo"].astype(str).str.contains("DEPOSITO CLI", na=False)]
-    
+
     df_final["Cant"] = pd.to_numeric(df_final["Cant"], errors='coerce').fillna(0)
     df_final["Cantidad"] = pd.to_numeric(df_final["Cantidad"], errors='coerce').fillna(0)
-    # FIX 2: astype (no astize)
     df_final["Tipo"] = df_final["Tipo"].astype(str).str.strip().str.upper()
-    
+
     total_efectivo = df_final[df_final["Tipo"] == "EFECTIVO"]["Cantidad"].sum()
-    
+
     subtotales = {}
-    for subtipo in ["CAJA 5 MAYO", "SAN LORENZO", "TECNOLÓGICO", "PENINSULA"]:
-        monto = df_final[df_final["__clasificacion_temp"] == subtipo]["Cant"].sum()
-        subtotales[subtipo] = monto
-    
-    fila_resumen = [
-        f"${total_efectivo:,.2f}", "TOTAL EFECTIVO", "OTROS MOVIMIENTOS"
-    ]
-    for subtipo in ["CAJA 5 MAYO", "SAN LORENZO", "TECNOLÓGICO", "PENINSULA"]:
-        fila_resumen.append(subtipo)
-        fila_resumen.append(f"${subtotales[subtipo]:,.2f}")
-    
+    for s in ["CAJA 5 MAYO", "SAN LORENZO", "TECNOLÓGICO", "PENINSULA"]:
+        subtotales[s] = df_final[df_final["__clasificacion_temp"] == s]["Cant"].sum()
+
+    # ---------- Generar Excel en memoria (sin escribir a disco) ----------
     wb = Workbook()
     ws = wb.active
-    
-    # Agrega encabezado
+    ws.title = "Clasificado"
+
+    # Encabezado
     ws.append(columnas_orden)
-    
-    # Agrega filas de datos
+
+    # Filas
     for row in dataframe_to_rows(df_final[columnas_orden], index=False, header=False):
         ws.append(row)
-    
+
     # Estilo encabezado
     for cell in ws[1]:
         cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal='center', vertical='center')
-    
-    # Ajustar ancho columnas
-    for col in ws.columns:
-        max_length = max(len(str(cell.value)) if cell.value else 0 for cell in col)
-        ws.column_dimensions[col[0].column_letter].width = max_length + 2
-    
-    # Agregar fila resumen en la última fila
-    ws.append(fila_resumen)
-    ultima_fila = ws.max_row
-    azul_claro = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
-    for cell in ws[ultima_fila]:
-        cell.fill = azul_claro
-        cell.font = Font(bold=True)
-    
-    # FIX 3: Guardar usando UPLOAD_FOLDER
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"excel_clasificado_{timestamp}.xlsx"
-    output_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    wb.save(output_path)
-    
-    return send_file(output_path, as_attachment=True)
 
+    # Ajustar anchos
+    for col in ws.columns:
+        max_length = max(len(str(c.value)) if c.value else 0 for c in col)
+        ws.column_dimensions[col[0].column_letter].width = min(max_length + 2, 60)
+
+    # Fila resumen con longitud igual al encabezado
+    fila_resumen = [""] * len(columnas_orden)
+    fila_resumen[0] = f"TOTAL EFECTIVO: ${total_efectivo:,.2f}"
+    # (Opcional) podrías agregar más totales en otras celdas si lo necesitas
+    ws.append(fila_resumen)
+
+    from openpyxl.styles import PatternFill
+    azul = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
+    for cell in ws[ws.max_row]:
+        cell.fill = azul
+        cell.font = Font(bold=True)
+
+    # Descargar
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out = BytesIO()
+    wb.save(out)
+    out.seek(0)
+    return send_file(
+        out,
+        as_attachment=True,
+        download_name=f"excel_clasificado_{ts}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 @app.route('/dashboard')
 @login_required
@@ -2448,51 +2481,98 @@ def ventas_upload_hto():
     if not archivo:
         flash("No se subió ningún archivo HTO", "error")
         return redirect(url_for("dashboard") + "#tab-ventas")
-    
-    try:
-        df = pd.read_excel(archivo)
-        df.columns = [str(c).strip() for c in df.columns]
 
-        # Renombrar para que coincida con nuestro modelo
-        df = df.rename(columns={
-            "UUID": "uuid_factura",
-            "UUID Relacion": "uuid_nc",
-            "Nombre Receptor": "cliente_1",
-            "FormaDePago": "forma_de_pago",
-            "Metodo de Pago": "metodo_de_pago",
-            "Total": "total_2",
-            "Serie": "serie",
-            "Folio": "folio",
-            "PAGO": "pago_1"   # si existe
-        })
+    try:
+        import re
+        from unidecode import unidecode
+        from sqlalchemy import or_
+
+        # --- Leer y normalizar encabezados
+        df = pd.read_excel(archivo)
+        def norm_hdr(s):
+            s = unidecode(str(s)).strip().lower()
+            s = re.sub(r"\(.*?\)", "", s)           # quita "(C3)" etc
+            s = re.sub(r"\s+", " ", s).strip()
+            s = s.replace(" ", "_")
+            return s
+
+        df.columns = [norm_hdr(c) for c in df.columns]
+
+        # --- Helper para elegir columnas tolerantes
+        def pick(*candidates):
+            cands = [norm_hdr(c) for c in candidates]
+            # match exacto
+            for cand in cands:
+                for col in df.columns:
+                    if col == cand:
+                        return col
+            # match parcial (contiene)
+            for cand in cands:
+                for col in df.columns:
+                    if cand in col:
+                        return col
+            return None
+
+        # Campos posibles en HTO
+        col_serie       = pick("serie")
+        col_folio       = pick("folio", "no_fac", "numero", "num", "folio_factura")
+        col_uuid        = pick("uuid_factura", "uuid", "uuid_cfdi")
+        col_uuid_nc     = pick("uuid_nc", "uuid_relacion", "uuid_relacionado", "uuid_rel")
+        col_cliente_c3  = pick("cliente_c3", "nombre_receptor", "cliente", "nombre")
+        col_forma_pago  = pick("forma_de_pago_c3", "formadepago", "forma_de_pago")
+        col_metodo_pago = pick("metodo_de_pago_c3", "metodo_de_pago")
+        col_total_c3    = pick("total_c3", "total")
+        col_pago        = pick("pago", "pago_1")
+
+        if not (col_serie and col_folio):
+            flash("HTO: no se detectaron las columnas de Serie/Folio.", "error")
+            return redirect(url_for("dashboard") + "#tab-ventas")
 
         nuevos = 0
+
         for _, r in df.iterrows():
-            serie = str(r.get("serie", "")).strip()
-            folio = str(r.get("folio", "")).strip()
+            serie = str(r.get(col_serie, "")).strip()
+            folio = str(r.get(col_folio, "")).strip()
             if not serie or not folio:
                 continue
 
-            # Buscar la venta que ya se cargó con el clasificado
-            venta = Venta.query.filter(Venta.no_fac == (serie + folio)).first()
+            clave_codigo = (serie + folio).strip()
+
+            # Buscar primero por codigo == Serie+Folio; si no, por no_fac == Folio
+            venta = (Venta.query.filter(or_(Venta.codigo == clave_codigo,
+                                            Venta.no_fac == folio))
+                               .order_by(Venta.id.desc())  # por si hay más de una
+                               .first())
             if not venta:
                 continue
 
-            # Rellenar campos si están vacíos
-            if not venta.uuid_factura:
-                venta.uuid_factura = str(r.get("uuid_factura", "")).strip()
-            if not venta.uuid_nc:
-                venta.uuid_nc = str(r.get("uuid_nc", "")).strip()
-            if not venta.cliente_1:
-                venta.cliente_1 = str(r.get("cliente_1", "")).strip()
-            if not venta.forma_de_pago:
-                venta.forma_de_pago = str(r.get("forma_de_pago", "")).strip()
-            if not venta.metodo_de_pago:
-                venta.metodo_de_pago = str(r.get("metodo_de_pago", "")).strip()
-            if not venta.total_2:
-                venta.total_2 = float(r.get("total_2", 0) or 0)
-            if not venta.pago_1:
-                venta.pago_1 = str(r.get("pago_1", "")).strip()
+            # Tomar valores del HTO
+            uuid_val   = str(r.get(col_uuid, "") or "").strip()
+            uuid_nc    = str(r.get(col_uuid_nc, "") or "").strip()
+            cliente_c3 = str(r.get(col_cliente_c3, "") or "").strip()
+            forma_pago = str(r.get(col_forma_pago, "") or "").strip()
+            metodo     = str(r.get(col_metodo_pago, "") or "").strip()
+            try:
+                total_c3   = float(_to_float(r.get(col_total_c3))) if col_total_c3 else 0.0
+            except Exception:
+                total_c3   = 0.0
+            pago_1     = str(r.get(col_pago, "") or "").strip() if col_pago else ""
+
+            # Rellenar solo si está vacío (autocompletar sin sobrescribir)
+            if not venta.uuid_factura and uuid_val:
+                venta.uuid_factura = uuid_val
+            if not venta.uuid_nc and uuid_nc:
+                venta.uuid_nc = uuid_nc
+            if not venta.cliente_1 and cliente_c3:
+                venta.cliente_1 = cliente_c3
+            if not venta.forma_de_pago and forma_pago:
+                venta.forma_de_pago = forma_pago
+            if not venta.metodo_de_pago and metodo:
+                venta.metodo_de_pago = metodo
+            if not venta.total_2 and total_c3:
+                venta.total_2 = total_c3
+            if not venta.pago_1 and pago_1:
+                venta.pago_1 = pago_1
 
             nuevos += 1
 
@@ -2503,8 +2583,9 @@ def ventas_upload_hto():
         db.session.rollback()
         app.logger.exception("[ventas_upload_hto] Error procesando archivo HTO")
         flash(f"Error al procesar HTO: {e}", "error")
-    
+
     return redirect(url_for("dashboard") + "#tab-ventas")
+
 
 
 @app.route("/ventas/sumar_dia", methods=["GET"])

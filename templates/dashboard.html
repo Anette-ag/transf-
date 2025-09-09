@@ -307,12 +307,12 @@
         <!-- Ventas Table Completa -->
         {% if ventas %}
         <div class="table-responsive">
-          <table class="table table-sm table-hover">
+          <table class="table table-sm table-hover align-middle">
             <thead class="table-light">
               <tr>
                 <th>Código</th>
                 <th>Num</th>
-                <th>No_fac</th>
+                <th># Factura</th>
                 <th>Fecha</th>
                 <th class="text-end">Cantidad</th>
                 <th>Tipo</th>
@@ -321,8 +321,16 @@
                 <th class="text-end">Cant</th>
                 <th>Cve_age</th>
                 <th>Nom_cte</th>
-                <th>Rfc_cte</th>
-                <th>Des_mon</th>
+                <th>RFC</th>
+                <th>Moneda</th>
+                <!-- Campos autocompletados desde HTO -->
+                <th>UUID Factura</th>
+                <th>UUID NC</th>
+                <th>Cliente (C3)</th>
+                <th>Forma de pago (C3)</th>
+                <th>Método de pago (C3)</th>
+                <th class="text-end">Total (C3)</th>
+                <th>Pago</th>
               </tr>
             </thead>
             <tbody>
@@ -332,15 +340,25 @@
                 <td>{{ v.num or '-' }}</td>
                 <td>{{ v.no_fac or '-' }}</td>
                 <td>{{ v.fecha.strftime('%d/%m/%Y') if v.fecha else '-' }}</td>
-                <td class="text-end">${{ "%.2f"|format(v.cantidad) if v.cantidad else '0.00' }}</td>
+                <td class="text-end">${{ "%.2f"|format(v.cantidad or 0) }}</td>
                 <td>{{ v.tipo or '-' }}</td>
                 <td>{{ v.no_nota or '-' }}</td>
                 <td>{{ v.subtipo or '-' }}</td>
-                <td class="text-end">${{ "%.2f"|format(v.cant) if v.cant else '0.00' }}</td>
+                <td class="text-end">${{ "%.2f"|format(v.cant or 0) }}</td>
                 <td>{{ v.cve_age or '-' }}</td>
                 <td>{{ v.nom_cte or '-' }}</td>
                 <td>{{ v.rfc_cte or '-' }}</td>
                 <td>{{ v.des_mon or '-' }}</td>
+                <!-- Nuevos campos HTO -->
+                <td class="text-truncate" style="max-width: 200px">{{ v.uuid_factura or '-' }}</td>
+                <td class="text-truncate" style="max-width: 200px">{{ v.uuid_nc or '-' }}</td>
+                <td>{{ v.cliente_1 or '-' }}</td>
+                <td>{{ v.forma_de_pago or '-' }}</td>
+                <td>{{ v.metodo_de_pago or '-' }}</td>
+                <td class="text-end">
+                  {% if v.total_2 is not none %}${{ "%.2f"|format(v.total_2) }}{% else %}-{% endif %}
+                </td>
+                <td>{{ v.pago_1 or '-' }}</td>
               </tr>
               {% endfor %}
             </tbody>
@@ -355,6 +373,7 @@
     </div>
   </div>
 </div>
+
 
 <!-- Modals -->
 <div class="modal fade" id="modalSubirBancos" tabindex="-1" aria-hidden="true">
