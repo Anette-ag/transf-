@@ -2484,14 +2484,42 @@ def ventas_upload_hto():
 
     try:
         import re
+        import math
+        import numpy as np
         from unidecode import unidecode
         from sqlalchemy import or_
 
+        # -------- Helpers anti-"nan" --------
+        def clean_str(x) -> str:
+            """Convierte NaN/None/'nan' en cadena vacía y quita espacios."""
+            if x is None:
+                return ""
+            try:
+                if isinstance(x, (float, np.floating)) and pd.isna(x):
+                    return ""
+            except Exception:
+                pass
+            s = str(x).strip()
+            return "" if s.lower() in ("nan", "none", "null") else s
+
+        def clean_float(x, default: float = 0.0) -> float:
+            """Convierte a float; NaN/None/inf -> default."""
+            try:
+                if x is None or (isinstance(x, (float, np.floating)) and pd.isna(x)):
+                    return float(default)
+                v = float(x)
+                if math.isnan(v) or math.isinf(v):
+                    return float(default)
+                return v
+            except Exception:
+                return float(default)
+
         # --- Leer y normalizar encabezados
         df = pd.read_excel(archivo)
+
         def norm_hdr(s):
             s = unidecode(str(s)).strip().lower()
-            s = re.sub(r"\(.*?\)", "", s)           # quita "(C3)" etc
+            s = re.sub(r"\(.*?\)", "", s)            # quita "(C3)" etc.
             s = re.sub(r"\s+", " ", s).strip()
             s = s.replace(" ", "_")
             return s
@@ -2506,14 +2534,14 @@ def ventas_upload_hto():
                 for col in df.columns:
                     if col == cand:
                         return col
-            # match parcial (contiene)
+            # match parcial (cand contenido en col)
             for cand in cands:
                 for col in df.columns:
                     if cand in col:
                         return col
             return None
 
-        # Campos posibles en HTO
+        # Campos posibles en HTO (acepta variantes)
         col_serie       = pick("serie")
         col_folio       = pick("folio", "no_fac", "numero", "num", "folio_factura")
         col_uuid        = pick("uuid_factura", "uuid", "uuid_cfdi")
@@ -2531,35 +2559,34 @@ def ventas_upload_hto():
         nuevos = 0
 
         for _, r in df.iterrows():
-            serie = str(r.get(col_serie, "")).strip()
-            folio = str(r.get(col_folio, "")).strip()
+            serie = clean_str(r.get(col_serie))
+            folio = clean_str(r.get(col_folio))
             if not serie or not folio:
                 continue
 
             clave_codigo = (serie + folio).strip()
 
             # Buscar primero por codigo == Serie+Folio; si no, por no_fac == Folio
-            venta = (Venta.query.filter(or_(Venta.codigo == clave_codigo,
-                                            Venta.no_fac == folio))
-                               .order_by(Venta.id.desc())  # por si hay más de una
-                               .first())
+            venta = (
+                Venta.query
+                    .filter(or_(Venta.codigo == clave_codigo, Venta.no_fac == folio))
+                    .order_by(Venta.id.desc())
+                    .first()
+            )
             if not venta:
                 continue
 
-            # Tomar valores del HTO
-            uuid_val   = str(r.get(col_uuid, "") or "").strip()
-            uuid_nc    = str(r.get(col_uuid_nc, "") or "").strip()
-            cliente_c3 = str(r.get(col_cliente_c3, "") or "").strip()
-            forma_pago = str(r.get(col_forma_pago, "") or "").strip()
-            metodo     = str(r.get(col_metodo_pago, "") or "").strip()
-            try:
-                total_c3   = float(_to_float(r.get(col_total_c3))) if col_total_c3 else 0.0
-            except Exception:
-                total_c3   = 0.0
-            pago_1     = str(r.get(col_pago, "") or "").strip() if col_pago else ""
+            # Tomar valores del HTO (ya saneados)
+            uuid_val   = clean_str(r.get(col_uuid)) if col_uuid else ""
+            uuid_nc    = clean_str(r.get(col_uuid_nc)) if col_uuid_nc else ""
+            cliente_c3 = clean_str(r.get(col_cliente_c3)) if col_cliente_c3 else ""
+            forma_pago = clean_str(r.get(col_forma_pago)) if col_forma_pago else ""
+            metodo     = clean_str(r.get(col_metodo_pago)) if col_metodo_pago else ""
+            total_c3   = clean_float(_to_float(r.get(col_total_c3)) if col_total_c3 else 0.0)
+            pago_1     = clean_str(r.get(col_pago)) if col_pago else ""
 
-            # Rellenar solo si está vacío (autocompletar sin sobrescribir)
-            if not venta.uuid_factura and uuid_val:
+            # Autocompletar sin sobrescribir si ya hay dato
+            if not venda.uuid_factura and uuid_val:
                 venta.uuid_factura = uuid_val
             if not venta.uuid_nc and uuid_nc:
                 venta.uuid_nc = uuid_nc
@@ -2569,7 +2596,7 @@ def ventas_upload_hto():
                 venta.forma_de_pago = forma_pago
             if not venta.metodo_de_pago and metodo:
                 venta.metodo_de_pago = metodo
-            if not venta.total_2 and total_c3:
+            if (not venta.total_2 or venta.total_2 == 0) and total_c3:
                 venta.total_2 = total_c3
             if not venta.pago_1 and pago_1:
                 venta.pago_1 = pago_1
@@ -2585,6 +2612,7 @@ def ventas_upload_hto():
         flash(f"Error al procesar HTO: {e}", "error")
 
     return redirect(url_for("dashboard") + "#tab-ventas")
+
 
 
 
