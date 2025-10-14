@@ -9,4 +9,4 @@ until psql -Atx "$DATABASE_URL" -c 'SELECT 1' >/dev/null; do
 done
 
 echo "PostgreSQL está listo - iniciando aplicación..."
-exec gunicorn app:app --workers 4 --bind 0.0.0.0:$PORT --timeout 120 --access-logfile -
+exec gunicorn app:app --workers 4 --bind 0.0.0.0:$PORT --timeout 300 --access-logfile -
