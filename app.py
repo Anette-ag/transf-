@@ -212,7 +212,7 @@ def _vv_use_header_row(df_raw: pd.DataFrame) -> pd.DataFrame:
 
 def _vv_pick_excel() -> str | None:
     """Elige el Excel a usar:
-       1) Si hay archivos en uploads/, usa el MÁS RECIENTE.
+       1) Si hay archivos en uploads/, usa el MÁS RECIENTE, ignorando los generados ('excel_transformado_').
        2) Si no hay, usa VV_EXCEL_PATH (si existe).
     """
     # 1) Último archivo subido en /uploads
@@ -222,10 +222,14 @@ def _vv_pick_excel() -> str | None:
             os.path.join(UPLOAD_FOLDER, f)
             for f in os.listdir(UPLOAD_FOLDER)
             if f.lower().endswith(exts)
+            # --> MODIFICACIÓN CLAVE: Ignorar archivos generados por la app
+            and not f.lower().startswith('excel_transformado_') 
+            # <-- FIN MODIFICACIÓN
         ]
         if files:
             return max(files, key=os.path.getmtime)  # más reciente
     except Exception:
+        # Aquí capturas cualquier error, como que la carpeta no exista o no se pueda leer
         pass
 
     # 2) Ruta fija por variable/setting
@@ -235,6 +239,7 @@ def _vv_pick_excel() -> str | None:
 
     return None
 
+# ---------------------------------------------
 # ===== Subida de Excel para el panel vv =====
 ALLOWED_EXTENSIONS = {"xlsx", "xls"}
 
