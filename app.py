@@ -33,7 +33,7 @@ app.secret_key = os.getenv('SECRET_KEY', 'cambia-esto-en-produccion')
 csrf = CSRFProtect(app)
 
 # Contraseña del panel (usa variable de entorno en prod)
-app.config["VV_SECRET"] = os.environ.get("VV_SECRET", "6ErNs4UAbb7El2W2")
+app.config["VV_SECRET"] = os.environ.get("VV_SECRET", "admin123")
 # Si VV_EXCEL_PATH no existe, el panel usará automáticamente el último .xlsx/.xls en UPLOAD_FOLDER
 app.config["VV_EXCEL_PATH"] = os.environ.get("VV_EXCEL_PATH", "rem_pendientes.xlsx")
 
@@ -2679,7 +2679,7 @@ def initialize_database_if_needed():
         db.create_all()
         if User.query.count() == 0:
             admin = User(username='admin', is_admin=True)
-            admin.password = os.getenv('ADMIN_PASSWORD', 'admin123')
+            admin.password = os.getenv('ADMIN_PASSWORD', 'TCaisv3zFo6Eh9aX')
             db.session.add(admin)
             db.session.commit()
             app.logger.info("Usuario admin creado automáticamente.")
