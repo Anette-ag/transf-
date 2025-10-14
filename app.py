@@ -2679,7 +2679,7 @@ def initialize_database_if_needed():
         db.create_all()
         if User.query.count() == 0:
             admin = User(username='admin', is_admin=True)
-            admin.password = os.getenv('ADMIN_PASSWORD', 'TCaisv3zFo6Eh9aX')
+            admin.password = os.getenv('ADMIN_PASSWORD', 'admin123')
             db.session.add(admin)
             db.session.commit()
             app.logger.info("Usuario admin creado automáticamente.")
