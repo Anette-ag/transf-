@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block title %}Detalle del Log #{{ log.id }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="fas fa-search"></i> Detalle del Log #{{ log.id }}</h2>
+    <div>
+        <a href="{{ url_for('ver_logs') }}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left"></i> Volver a logs
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="fas fa-info-circle"></i> Información General</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <th width="40%">ID del Log:</th>
+                        <td><strong>#{{ log.id }}</strong></td>
+                    </tr>
+                    <tr>
+                        <th>Fecha y Hora:</th>
+                        <td>{{ log.fecha_hora.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                    </tr>
+                    <tr>
+                        <th>Acción:</th>
+                        <td>
+                            <span class="badge 
+                                {% if log.accion == 'INSERT' %}bg-success
+                                {% elif log.accion == 'UPDATE' %}bg-warning text-dark
+                                {% elif log.accion == 'DELETE' %}bg-danger
+                                {% else %}bg-info{% endif %}">
+                                {{ log.accion }}
+                            </span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Tabla Afectada:</th>
+                        <td><code>{{ log.tabla_afectada }}</code></td>
+                    </tr>
+                    <tr>
+                        <th>Registro ID:</th>
+                        <td>
+                            {% if log.registro_id %}
+                                <span class="badge bg-dark">{{ log.registro_id }}</span>
+                            {% else %}
+                                <span class="text-muted">N/A</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header bg-info text-white">
+                <h5 class="mb-0"><i class="fas fa-user"></i> Información del Usuario</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <th width="40%">Usuario:</th>
+                        <td>
+                            {% if log.usuario_id %}
+                                <i class="fas fa-user"></i> {{ log.usuario_nombre }}
+                                <br><small class="text-muted">ID: {{ log.usuario_id }}</small>
+                            {% else %}
+                                <span class="text-muted">Sistema/Automático</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Dirección IP:</th>
+                        <td>{{ log.ip_address or 'N/A' }}</td>
+                    </tr>
+                    <tr>
+                        <th>User Agent:</th>
+                        <td>
+                            {% if log.user_agent %}
+                                <small><code>{{ log.user_agent[:50] }}...</code></small>
+                            {% else %}
+                                <span class="text-muted">N/A</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Datos de la operación -->
+<div class="row">
+    {% if log.accion == 'UPDATE' and datos_anteriores and datos_nuevos %}
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-warning text-dark">
+                <h5 class="mb-0"><i class="fas fa-arrow-left"></i> Datos Anteriores</h5>
+            </div>
+            <div class="card-body">
+                <pre class="json-pre"><code>{{ datos_anteriores | tojson(indent=2) }}</code></pre>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0"><i class="fas fa-arrow-right"></i> Datos Nuevos</h5>
+            </div>
+            <div class="card-body">
+                <pre class="json-pre"><code>{{ datos_nuevos | tojson(indent=2) }}</code></pre>
+            </div>
+        </div>
+    </div>
+    
+    {% elif log.accion == 'INSERT' and datos_nuevos %}
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0"><i class="fas fa-plus-circle"></i> Datos Insertados</h5>
+            </div>
+            <div class="card-body">
+                <pre class="json-pre"><code>{{ datos_nuevos | tojson(indent=2) }}</code></pre>
+            </div>
+        </div>
+    </div>
+    
+    {% elif log.accion == 'DELETE' and datos_anteriores %}
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header bg-danger text-white">
+                <h5 class="mb-0"><i class="fas fa-trash"></i> Datos Eliminados</h5>
+            </div>
+            <div class="card-body">
+                <pre class="json-pre"><code>{{ datos_anteriores | tojson(indent=2) }}</code></pre>
+            </div>
+        </div>
+    </div>
+    
+    {% else %}
+    <div class="col-12">
+        <div class="alert alert-info">
+            <i class="fas fa-info-circle"></i> No hay datos específicos registrados para esta operación.
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<div class="mt-4 text-center">
+    <a href="{{ url_for('ver_logs') }}" class="btn btn-secondary">
+        <i class="fas fa-arrow-left"></i> Volver al listado de logs
+    </a>
+</div>
+{% endblock %}

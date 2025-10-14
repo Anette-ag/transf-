@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pruebas de Auditoría</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-4">
+        <h1>🔍 Sistema de Auditoría - Pruebas</h1>
+        
+        <!-- Estadísticas -->
+        <div class="row mt-4">
+            <div class="col-md-3">
+                <div class="card text-white bg-primary">
+                    <div class="card-body">
+                        <h5 class="card-title">{{ stats.transferencias }}</h5>
+                        <p class="card-text">Transferencias</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-white bg-success">
+                    <div class="card-body">
+                        <h5 class="card-title">{{ stats.usuarios }}</h5>
+                        <p class="card-text">Usuarios</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-white bg-warning">
+                    <div class="card-body">
+                        <h5 class="card-title">{{ stats.logs_transferencias }}</h5>
+                        <p class="card-text">Logs Transferencias</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-white bg-info">
+                    <div class="card-body">
+                        <h5 class="card-title">{{ stats.total_logs }}</h5>
+                        <p class="card-text">Total Logs</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Botones de prueba -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <h3>Generar Pruebas</h3>
+                <a href="/admin/generar-insert" class="btn btn-success">➕ INSERT</a>
+                <a href="/admin/generar-update" class="btn btn-warning">✏️ UPDATE</a>
+                <a href="/admin/generar-delete" class="btn btn-danger">🗑️ DELETE</a>
+                <a href="/admin/generar-usuario" class="btn btn-info">👤 USUARIO</a>
+                <a href="/admin/limpiar-pruebas" class="btn btn-secondary">🧹 LIMPIAR</a>
+            </div>
+        </div>
+
+        <!-- Logs recientes -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <h3>Logs Recientes</h3>
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Fecha/Hora</th>
+                                <th>Acción</th>
+                                <th>Tabla</th>
+                                <th>Registro ID</th>
+                                <th>Usuario</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for log in logs %}
+                            <tr>
+                                <td>{{ log.id }}</td>
+                                <td>{{ log.fecha_hora.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                                <td>
+                                    <span class="badge 
+                                        {% if log.accion == 'INSERT' %}bg-success
+                                        {% elif log.accion == 'UPDATE' %}bg-warning
+                                        {% else %}bg-danger{% endif %}">
+                                        {{ log.accion }}
+                                    </span>
+                                </td>
+                                <td>{{ log.tabla_afectada }}</td>
+                                <td>{{ log.registro_id or 'N/A' }}</td>
+                                <td>{{ log.usuario_nombre or 'Sistema' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Transferencias recientes -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <h3>Transferencias Recientes</h3>
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Referencia</th>
+                                <th>Monto</th>
+                                <th>Banco</th>
+                                <th>Concepto</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for transferencia in transferencias %}
+                            <tr>
+                                <td>{{ transferencia.id }}</td>
+                                <td>{{ transferencia.referencia }}</td>
+                                <td>${{ "%.2f"|format(transferencia.monto) }}</td>
+                                <td>{{ transferencia.banco }}</td>
+                                <td>{{ transferencia.concepto }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mensajes Flash -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <div class="position-fixed top-0 end-0 p-3" style="z-index: 11">
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'danger' if category == 'error' else 'success' }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}Logs de Auditoría{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="fas fa-clipboard-list"></i> Logs de Auditoría</h2>
+    <div>
+        <a href="{{ url_for('exportar_logs') }}" class="btn btn-success">
+            <i class="fas fa-file-excel"></i> Exportar a Excel
+        </a>
+    </div>
+</div>
+
+<!-- Filtros rápidos -->
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-3">
+                <strong>Total:</strong> {{ logs.total }} registros
+            </div>
+            <div class="col-md-9">
+                <div class="btn-group">
+                    <a href="{{ url_for('ver_logs', page=logs.page) }}" class="btn btn-outline-secondary btn-sm">
+                        Todos
+                    </a>
+                    <a href="{{ url_for('ver_logs', page=logs.page, filtro='INSERT') }}" class="btn btn-outline-success btn-sm">
+                        <i class="fas fa-plus"></i> INSERT
+                    </a>
+                    <a href="{{ url_for('ver_logs', page=logs.page, filtro='UPDATE') }}" class="btn btn-outline-warning btn-sm">
+                        <i class="fas fa-edit"></i> UPDATE
+                    </a>
+                    <a href="{{ url_for('ver_logs', page=logs.page, filtro='DELETE') }}" class="btn btn-outline-danger btn-sm">
+                        <i class="fas fa-trash"></i> DELETE
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% if logs.items %}
+        <div class="table-responsive">
+            <table class="table table-hover table-striped">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Fecha/Hora</th>
+                        <th>Usuario</th>
+                        <th>Acción</th>
+                        <th>Tabla</th>
+                        <th>Registro ID</th>
+                        <th>IP</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs.items %}
+                    <tr>
+                        <td>
+                            <small>{{ log.fecha_hora.strftime('%Y-%m-%d %H:%M:%S') }}</small>
+                        </td>
+                        <td>
+                            {% if log.usuario_id %}
+                                <i class="fas fa-user"></i> {{ log.usuario_nombre }}
+                            {% else %}
+                                <span class="text-muted">Sistema</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="badge 
+                                {% if log.accion == 'INSERT' %}bg-success
+                                {% elif log.accion == 'UPDATE' %}bg-warning text-dark
+                                {% elif log.accion == 'DELETE' %}bg-danger
+                                {% else %}bg-info{% endif %}">
+                                {{ log.accion }}
+                            </span>
+                        </td>
+                        <td>
+                            <code>{{ log.tabla_afectada }}</code>
+                        </td>
+                        <td>
+                            {% if log.registro_id %}
+                                <span class="badge bg-secondary">{{ log.registro_id }}</span>
+                            {% else %}
+                                <span class="text-muted">N/A</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <small>{{ log.ip_address or 'N/A' }}</small>
+                        </td>
+                        <td>
+                            <a href="{{ url_for('detalle_log', log_id=log.id) }}" 
+                               class="btn btn-sm btn-outline-primary" 
+                               title="Ver detalles">
+                                <i class="fas fa-search"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Paginación -->
+        {% if logs.pages > 1 %}
+        <nav aria-label="Paginación de logs">
+            <ul class="pagination justify-content-center">
+                {% if logs.has_prev %}
+                <li class="page-item">
+                    <a class="page-link" href="{{ url_for('ver_logs', page=logs.prev_num) }}">
+                        <i class="fas fa-chevron-left"></i> Anterior
+                    </a>
+                </li>
+                {% endif %}
+                
+                {% for page_num in logs.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+                    {% if page_num %}
+                        <li class="page-item {% if page_num == logs.page %}active{% endif %}">
+                            <a class="page-link" href="{{ url_for('ver_logs', page=page_num) }}">{{ page_num }}</a>
+                        </li>
+                    {% else %}
+                        <li class="page-item disabled"><span class="page-link">...</span></li>
+                    {% endif %}
+                {% endfor %}
+                
+                {% if logs.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="{{ url_for('ver_logs', page=logs.next_num) }}">
+                        Siguiente <i class="fas fa-chevron-right"></i>
+                    </a>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+
+        {% else %}
+        <div class="text-center py-5">
+            <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
+            <h4 class="text-muted">No hay logs registrados</h4>
+            <p class="text-muted">Los registros de auditoría aparecerán aquí automáticamente.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="es" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <title>Registro de pedidos / remisiones / facturas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      --bg:#0b0f14; --card:#11161d; --muted:#94a3b8; --fg:#e6edf3; --border:#1f2937; --head:#0f172a;
+      --accent:#60a5fa; --ok:#10b981; --warn:#f59e0b; --info:#3b82f6; --danger:#ef4444;
+      --chip:#0b1220;
+    }
+    [data-theme="light"]{
+      --bg:#ffffff; --card:#ffffff; --muted:#6b7280; --fg:#111827; --border:#e5e7eb; --head:#f8fafc;
+      --accent:#2563eb; --ok:#059669; --warn:#d97706; --info:#2563eb; --danger:#dc2626; --chip:#f1f5f9;
+    }
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,"Helvetica Neue",Arial;}
+    .wrap{max-width:1200px;margin:24px auto;padding:0 16px}
+    header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+    h1{font-size:20px;margin:0}
+    .sub{color:var(--muted);font-size:13px;margin:2px 0 0}
+    .src{display:inline-flex;gap:8px;align-items:center}
+    .tag{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:12px;color:var(--muted);background:var(--chip)}
+    .toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin:14px 0}
+    .left, .right{display:flex;gap:10px;align-items:center}
+    input[type="text"], input[type="password"], input[type="file"], select{
+      padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:transparent;color:var(--fg)
+    }
+    button{padding:10px 12px;border:1px solid var(--border);border-radius:10px;cursor:pointer;background:var(--head);color:var(--fg)}
+    button.ghost{background:transparent}
+    button.primary{background:var(--accent);border-color:transparent;color:#fff}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px}
+    table{width:100%;border-collapse:separate;border-spacing:0}
+    thead th{position:sticky;top:0;background:var(--head);text-align:left;font-weight:600;border-bottom:1px solid var(--border);font-size:13px}
+    th,td{padding:10px 12px;font-size:14px;vertical-align:top;border-bottom:1px solid var(--border)}
+    tbody tr:hover{background:color-mix(in oklab, var(--head) 20%, transparent)}
+    .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;border-radius:999px;padding:4px 10px;background:var(--chip);border:1px solid var(--border)}
+    .status{font-weight:600}
+    .s-fact{background:color-mix(in oklab, var(--ok) 18%, var(--chip));border-color:color-mix(in oklab, var(--ok) 35%, var(--border));color:inherit}
+    .s-anticipo{background:color-mix(in oklab, var(--warn) 18%, var(--chip));border-color:color-mix(in oklab, var(--warn) 35%, var(--border))}
+    .s-surtido{background:color-mix(in oklab, var(--info) 18%, var(--chip));border-color:color-mix(in oklab, var(--info) 35%, var(--border))}
+    .s-pend{background:var(--chip)}
+    .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+    dialog{border:none;border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,.35);padding:20px;max-width:380px;background:var(--card);color:var(--fg)}
+    dialog::backdrop{background:rgba(0,0,0,.45)}
+    .err{color:var(--danger);display:none;margin-top:8px}
+    .hint{position:fixed;right:8px;bottom:8px;opacity:.35;font-size:12px}
+    .pagination{display:flex;gap:6px;align-items:center}
+    .sort{cursor:pointer;user-select:none}
+    .skeleton{height:14px;border-radius:6px;background:linear-gradient(90deg, rgba(200,200,200,.15), rgba(200,200,200,.35), rgba(200,200,200,.15));animation:shimmer 1.2s infinite}
+    @keyframes shimmer{0%{background-position:-200px 0}100%{background-position:200px 0}}
+    .hidden{display:none}
+    .pill{border:1px solid var(--border);border-radius:999px;padding:4px 10px}
+    .toggle{border:1px solid var(--border);background:transparent;border-radius:999px;padding:6px 10px}
+    .count{color:var(--muted);font-size:13px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Registro de pedidos / remisiones / facturas</h1>
+        <p class="sub">Consolida 1 fila por pedido: remisiones, facturas de anticipo y de remisión, con estado y vendedor.</p>
+      </div>
+      <div class="src">
+        <span id="src" class="tag" aria-live="polite">—</span>
+        <button id="themeBtn" class="ghost" title="Cambiar tema">🌓</button>
+      </div>
+    </header>
+
+    <div class="toolbar">
+      <div class="left">
+        <button id="openBtn" class="ghost">Abrir panel</button>
+        <form id="uploadForm" class="hidden" aria-live="polite">
+          <input type="file" id="file" name="file" accept=".xlsx,.xls" required />
+          <button type="submit" class="primary">Subir Excel</button>
+          <span id="uploadMsg" class="count"></span>
+        </form>
+      </div>
+      <div class="right">
+        <input type="text" id="q" placeholder="Filtrar por PEDIDO…" />
+        <select id="perPage">
+          <option value="10">10 por página</option>
+          <option value="25" selected>25 por página</option>
+          <option value="50">50 por página</option>
+          <option value="100">100 por página</option>
+        </select>
+        <button id="fSinAnt" class="toggle" title="Sólo sin anticipo">Sin anticipo</button>
+        <button id="fSinRem" class="toggle" title="Sólo sin remisiones">Sin remisiones</button>
+        <button id="fSinFacRem" class="toggle" title="Sólo sin factura de remisión">Sin fac. remisión</button>
+        <button id="exportBtn">Exportar CSV</button>
+        <button id="clearBtn" class="ghost">Limpiar caché</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="count" id="metaLine">—</div>
+      <div class="table-wrap">
+        <table id="t">
+          <thead>
+            <tr>
+              <th class="sort" data-k="FECHA">Fecha ⬍</th>
+              <th class="sort" data-k="PEDIDO">Pedido ⬍</th>
+              <th class="sort" data-k="REMISIONES">Remisiones ⬍</th>
+              <th class="sort" data-k="FACTURA DE ANTICIPO">Factura de anticipo ⬍</th>
+              <th class="sort" data-k="FACTURA DE REMISIÓN">Factura de remisión ⬍</th>
+              <th class="sort" data-k="STATUS">Status ⬍</th>
+              <th class="sort" data-k="VENDEDOR">Vendedor ⬍</th>
+            </tr>
+          </thead>
+          <tbody id="tbody">
+            <!-- skeleton -->
+            <tr><td colspan="7"><div class="skeleton" style="width:100%"></div></td></tr>
+            <tr><td colspan="7"><div class="skeleton" style="width:90%"></div></td></tr>
+            <tr><td colspan="7"><div class="skeleton" style="width:85%"></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="toolbar" style="margin-top:12px">
+        <div class="pagination">
+          <button id="prevBtn">◀</button>
+          <span id="pageInfo" class="pill">1 / 1</span>
+          <button id="nextBtn">▶</button>
+        </div>
+        <div class="count" id="totalInfo">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de acceso -->
+  <dialog id="loginModal" aria-labelledby="loginTitle" aria-describedby="loginDesc">
+    <form id="loginForm" method="dialog">
+      <h3 id="loginTitle" style="margin:0 0 6px">Acceso protegido</h3>
+      <p id="loginDesc" style="margin:0 0 10px">Introduce la contraseña del apartado.</p>
+      <div class="row">
+        <label class="sr-only" for="pwd">Contraseña</label>
+        <input type="password" id="pwd" name="password" required autofocus />
+      </div>
+      <div class="row" style="display:flex;gap:8px;justify-content:flex-end">
+        <button id="btnOk" class="primary">Entrar</button>
+        <button type="button" onclick="document.getElementById('loginModal').close()">Cancelar</button>
+      </div>
+      <p id="err" class="err">Contraseña incorrecta</p>
+    </form>
+  </dialog>
+
+  <div class="hint">tip: presiona <b>v</b> dos veces o usa “Abrir panel”</div>
+
+  <script>
+    // ===== Botón limpiar caché
+    document.getElementById('clearBtn').addEventListener('click', async ()=>{
+      if(!confirm('¿Limpiar la caché del consolidado?')) return;
+      const res = await fetch('/vv/clear-cache', { method:'POST' });
+      if(res.ok){
+        await loadData();
+        alert('Caché limpiada.');
+      }else{
+        alert('No se pudo limpiar la caché (¿sesión vencida?).');
+      }
+    });
+
+    // ===== Tema
+    const themeBtn = document.getElementById('themeBtn');
+    themeBtn.addEventListener('click', ()=>{
+      const r = document.documentElement;
+      r.dataset.theme = r.dataset.theme === 'light' ? 'dark' : 'light';
+    });
+
+    // ===== Estado UI
+    let DATA = [];        // Datos crudos del backend
+    let VIEW = [];        // Datos filtrados/ordenados
+    let PAGE = 1;
+    let PERPAGE = 25;
+    let SORTKEY = 'PEDIDO';
+    let SORTDIR = 'asc'; // 'asc'|'desc'
+    const KS = ["FECHA","PEDIDO","REMISIONES","FACTURA DE ANTICIPO","FACTURA DE REMISIÓN","STATUS","VENDEDOR"];
+
+    // Filtros (globales!)
+    let F_SIN_ANT = false;
+    let F_SIN_REM = false;
+    let F_SIN_FACREM = false;
+
+    // Helper para tomar mayúsculas/minúsculas
+    const getK = (r, k) => (r[k] ?? r[k.toLowerCase()] ?? "");
+
+    // ===== Tecla 'v' 'v' abre panel
+    let buffer = "";
+    document.addEventListener("keydown", (e)=>{
+      buffer = (buffer + e.key.toLowerCase()).slice(-4);
+      if (buffer.endsWith("vv")) openLogin();
+    });
+    document.getElementById('openBtn').addEventListener('click', openLogin);
+    function openLogin(){
+      document.getElementById("loginModal").showModal();
+      document.getElementById("pwd").focus();
+    }
+
+    // ===== Login
+    const loginForm = document.getElementById("loginForm");
+    loginForm.addEventListener("submit", async (ev)=>{
+      ev.preventDefault();
+      const fd = new FormData(loginForm);
+      const res = await fetch("/vv/login", {method:"POST", body: fd});
+      if (res.status === 204) {
+        document.getElementById("err").style.display = "none";
+        document.getElementById("loginModal").close();
+        document.getElementById("uploadForm").classList.remove("hidden");
+        await loadData();
+      } else {
+        document.getElementById("err").style.display = "block";
+        document.getElementById("pwd").value = "";
+        document.getElementById("pwd").focus();
+      }
+    });
+
+    // ===== Subir Excel
+    const uploadForm = document.getElementById("uploadForm");
+    const uploadMsg  = document.getElementById("uploadMsg");
+    uploadForm.addEventListener("submit", async (ev)=>{
+      ev.preventDefault();
+      uploadMsg.textContent = "Subiendo…";
+      const fd = new FormData(uploadForm);
+      const res = await fetch("/vv/upload", {method:"POST", body: fd});
+      try{
+        const j = await res.json();
+        if(res.ok && j.ok){
+          uploadMsg.textContent = `Archivo cargado: ${j.filename} (${j.rows_processed} filas)`;
+          await loadData(true);
+          uploadForm.reset();
+        }else{
+          uploadMsg.textContent = j.error || j.message || "Error al subir";
+        }
+      }catch{
+        uploadMsg.textContent = "Error al subir";
+      }
+    });
+
+    // ===== Listeners de filtros (una sola vez, fuera de render)
+    const btnSinAnt = document.getElementById('fSinAnt');
+    const btnSinRem = document.getElementById('fSinRem');
+    const btnSinFacRem = document.getElementById('fSinFacRem');
+    function toggleBtn(el, flag){ flag ? el.classList.add('primary') : el.classList.remove('primary'); }
+
+    btnSinAnt.addEventListener('click', async ()=>{
+      F_SIN_ANT = !F_SIN_ANT; toggleBtn(btnSinAnt, F_SIN_ANT); PAGE = 1; await loadData();
+    });
+    btnSinRem.addEventListener('click', async ()=>{
+      F_SIN_REM = !F_SIN_REM; toggleBtn(btnSinRem, F_SIN_REM); PAGE = 1; await loadData();
+    });
+    btnSinFacRem.addEventListener('click', async ()=>{
+      F_SIN_FACREM = !F_SIN_FACREM; toggleBtn(btnSinFacRem, F_SIN_FACREM); PAGE = 1; await loadData();
+    });
+
+    // ===== Cargar datos
+    async function loadData(fromUpload=false){
+      const tbody = document.getElementById("tbody");
+      tbody.innerHTML = `<tr><td colspan="7"><div class="skeleton" style="width:100%"></div></td></tr>`;
+
+      // usar claves que tu backend espera (?missing_*)
+      const params = new URLSearchParams();
+      if (F_SIN_ANT)    params.set('missing_anticipo', '1');
+      if (F_SIN_REM)    params.set('missing_remision', '1');
+      if (F_SIN_FACREM) params.set('missing_facrem', '1');
+
+      const url = params.toString() ? `/vv/data?${params.toString()}` : '/vv/data';
+      const res = await fetch(url);
+
+      if(!res.ok){ tbody.innerHTML = `<tr><td colspan="7">No se pudo cargar.</td></tr>`; return; }
+      const json = await res.json();
+      DATA = json.data || [];
+      document.getElementById("src").textContent = json.source ? `Fuente: ${json.source}` : "Fuente: —";
+      document.getElementById("totalInfo").textContent = `${json.count ?? DATA.length} registros`;
+      PAGE = 1; // reset
+      applyFiltersAndRender();
+      if(!fromUpload){ document.getElementById('q').value = ""; }
+    }
+
+    // ===== Búsqueda
+    document.getElementById('q').addEventListener('input', ()=>{
+      PAGE = 1;
+      applyFiltersAndRender();
+    });
+
+    // ===== Per page
+    const per = document.getElementById('perPage');
+    PERPAGE = +per.value;
+    per.addEventListener('change', ()=>{
+      PERPAGE = +per.value;
+      PAGE = 1;
+      render();
+    });
+
+    // ===== Ordenamiento
+    document.querySelectorAll('th.sort').forEach(th=>{
+      th.addEventListener('click', ()=>{
+        const k = th.dataset.k;
+        if(SORTKEY === k){
+          SORTDIR = (SORTDIR === 'asc') ? 'desc' : 'asc';
+        }else{
+          SORTKEY = k; SORTDIR = 'asc';
+        }
+        render();
+      });
+    });
+
+    // ===== Paginación
+    document.getElementById('prevBtn').addEventListener('click', ()=>{ if(PAGE>1){ PAGE--; render(); }});
+    document.getElementById('nextBtn').addEventListener('click', ()=>{
+      const maxp = Math.max(1, Math.ceil(VIEW.length / PERPAGE));
+      if(PAGE < maxp){ PAGE++; render(); }
+    });
+
+    // ===== Exportar CSV (cliente)
+    document.getElementById('exportBtn').addEventListener('click', ()=>{
+      if(!VIEW.length){ return; }
+      const rows = [KS.join(",")].concat(
+        VIEW.map(r=>KS.map(k=>{
+          const v = (getK(r,k)+"").replaceAll('"','""');
+          const needQuote = v.includes(",") || v.includes('"') || v.includes("\n");
+          return needQuote ? `"${v}"` : v;
+        }).join(","))
+      );
+      const blob = new Blob([rows.join("\n")], {type:"text/csv;charset=utf-8"});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'rem_pendientes_consolidado.csv';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+
+    // ===== Filtro + orden + render
+    function applyFiltersAndRender(){
+      const q = document.getElementById('q').value.trim().toLowerCase();
+      VIEW = DATA.filter(r => (getK(r,'PEDIDO')+"").toLowerCase().includes(q));
+      render();
+    }
+
+    function render(){
+      // ordenar
+      VIEW.sort((a,b)=>{
+        const va = (getK(a,SORTKEY)+"").toLowerCase();
+        const vb = (getK(b,SORTKEY)+"").toLowerCase();
+        if(va === vb) return 0;
+        const res = va > vb ? 1 : -1;
+        return SORTDIR === 'asc' ? res : -res;
+      });
+
+      const total = VIEW.length;
+      const maxp = Math.max(1, Math.ceil(total / PERPAGE));
+      PAGE = Math.min(PAGE, maxp);
+      const start = (PAGE-1)*PERPAGE;
+      const end = start + PERPAGE;
+      const slice = VIEW.slice(start, end);
+
+      document.getElementById('pageInfo').textContent = `${PAGE} / ${maxp}`;
+
+      const activos = [
+        F_SIN_ANT ? 'sin anticipo' : null,
+        F_SIN_REM ? 'sin remisiones' : null,
+        F_SIN_FACREM ? 'sin fac. remisión' : null
+      ].filter(Boolean).join(' · ') || '—';
+
+      document.getElementById('metaLine').textContent =
+        `Mostrando ${slice.length} de ${total} resultados — orden: ${SORTKEY} (${SORTDIR}) — filtros: ${activos}`;
+
+      const tbody = document.getElementById("tbody");
+      tbody.innerHTML = "";
+      if(!slice.length){
+        tbody.innerHTML = `<tr><td colspan="7">Sin resultados.</td></tr>`;
+        return;
+      }
+
+      for(const r of slice){
+        const fecha   = getK(r,"FECHA");
+        const pedido  = getK(r,"PEDIDO");
+        const rem     = getK(r,"REMISIONES");
+        const fant    = getK(r,"FACTURA DE ANTICIPO");
+        const frem    = getK(r,"FACTURA DE REMISIÓN");
+        const status  = (getK(r,"STATUS")||"").toLowerCase();
+        const vend    = getK(r,"VENDEDOR");
+
+        // status chip
+        let sClass = "s-pend", sText = "Por surtir";
+        if(status.includes("factur")){ sClass="s-fact"; sText="Facturado"; }
+        else if(status.includes("anticipo")){ sClass="s-anticipo"; sText="Con anticipo"; }
+        else if(status.includes("surt")){ sClass="s-surtido"; sText="Surtido"; }
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${fecha||""}</td>
+          <td><span class="chip">${pedido||""}</span></td>
+          <td>${rem||""}</td>
+          <td>${fant||""}</td>
+          <td>${frem||""}</td>
+          <td><span class="chip status ${sClass}">${sText}</span></td>
+          <td>${vend||""}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    // Auto refresh cada 2 min si ya autenticado
+    setInterval(async ()=>{
+      if(!document.getElementById('uploadForm').classList.contains('hidden')){
+        await loadData();
+      }
+    }, 120000);
+
+    // Cargar si ya hay sesión válida (opcional: intentamos una carga silenciosa)
+    (async ()=>{
+      try{ await loadData(); }catch{}
+    })();
+  </script>
+</body>
+</html>
