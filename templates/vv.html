@@ -54,6 +54,8 @@
     .pill{border:1px solid var(--border);border-radius:999px;padding:4px 10px}
     .toggle{border:1px solid var(--border);background:transparent;border-radius:999px;padding:6px 10px}
     .count{color:var(--muted);font-size:13px}
+    .progress{height:8px;border-radius:999px;background:var(--chip);border:1px solid var(--border);overflow:hidden;min-width:180px}
+    .bar{height:100%;width:0%;background:var(--accent);transition:width .15s linear}
   </style>
 </head>
 <body>
@@ -74,8 +76,13 @@
         <button id="openBtn" class="ghost">Abrir panel</button>
         <form id="uploadForm" class="hidden" aria-live="polite">
           <input type="file" id="file" name="file" accept=".xlsx,.xls" required />
-          <button type="submit" class="primary">Subir Excel</button>
+          <button id="uploadBtn" type="submit" class="primary">Subir Excel</button>
           <span id="uploadMsg" class="count"></span>
+          <span id="progressWrap" class="hidden" style="display:inline-flex;align-items:center;gap:8px">
+            <div class="progress"><div id="bar" class="bar"></div></div>
+            <span id="pct" class="count">0%</span>
+            <button id="abortBtn" type="button" class="ghost" title="Cancelar">✖</button>
+          </span>
         </form>
       </div>
       <div class="right">
@@ -215,29 +222,91 @@
       }
     });
 
-    // ===== Subir Excel
+    // ===== Subida con XHR (barra de progreso) + validación
     const uploadForm = document.getElementById("uploadForm");
+    const uploadBtn  = document.getElementById("uploadBtn");
     const uploadMsg  = document.getElementById("uploadMsg");
-    uploadForm.addEventListener("submit", async (ev)=>{
+    const fileInput  = document.getElementById("file");
+    const progressWrap = document.getElementById("progressWrap");
+    const bar        = document.getElementById("bar");
+    const pct        = document.getElementById("pct");
+    const abortBtn   = document.getElementById("abortBtn");
+    let currentXHR   = null;
+
+    const MAX_MB = 25; // límite cliente para evitar subidas enormes
+    function resetProgress(){
+      bar.style.width = '0%';
+      pct.textContent = '0%';
+      progressWrap.classList.add('hidden');
+    }
+
+    uploadForm.addEventListener("submit", (ev)=>{
       ev.preventDefault();
+      const f = fileInput.files?.[0];
+      if(!f){ uploadMsg.textContent = "Selecciona un archivo .xlsx/.xls"; return; }
+      const extOk = /\.(xlsx|xls)$/i.test(f.name);
+      if(!extOk){ uploadMsg.textContent = "Formato no permitido (usa .xlsx o .xls)"; return; }
+      if(f.size > MAX_MB*1024*1024){ uploadMsg.textContent = `Archivo muy grande (máx ${MAX_MB}MB)`; return; }
+
       uploadMsg.textContent = "Subiendo…";
-      const fd = new FormData(uploadForm);
-      const res = await fetch("/vv/upload", {method:"POST", body: fd});
-      try{
-        const j = await res.json();
-        if(res.ok && j.ok){
-          uploadMsg.textContent = `Archivo cargado: ${j.filename} (${j.rows_processed} filas)`;
-          await loadData(true);
-          uploadForm.reset();
-        }else{
-          uploadMsg.textContent = j.error || j.message || "Error al subir";
+      uploadBtn.disabled = true;
+      fileInput.disabled = true;
+      progressWrap.classList.remove('hidden');
+
+      const fd = new FormData();
+      fd.append('file', f);
+
+      const xhr = new XMLHttpRequest();
+      currentXHR = xhr;
+
+      xhr.upload.onprogress = (e)=>{
+        if(e.lengthComputable){
+          const p = Math.round((e.loaded/e.total)*100);
+          bar.style.width = p + '%';
+          pct.textContent = p + '%';
         }
-      }catch{
-        uploadMsg.textContent = "Error al subir";
+      };
+      xhr.onload = async ()=>{
+        currentXHR = null;
+        uploadBtn.disabled = false;
+        fileInput.disabled = false;
+        try{
+          const j = JSON.parse(xhr.responseText || "{}");
+          if(xhr.status >= 200 && xhr.status < 300 && j.ok){
+            uploadMsg.textContent = `Archivo cargado: ${j.filename} (${j.rows_processed} filas)`;
+            await loadData(true);
+            uploadForm.reset();
+          }else{
+            uploadMsg.textContent = j.error || j.message || "Error al subir";
+          }
+        }catch{
+          uploadMsg.textContent = "Error al subir";
+        }
+        setTimeout(resetProgress, 500);
+      };
+      xhr.onerror = ()=>{
+        currentXHR = null;
+        uploadBtn.disabled = false;
+        fileInput.disabled = false;
+        uploadMsg.textContent = "Error de red al subir";
+        resetProgress();
+      };
+      xhr.open("POST", "/vv/upload");
+      xhr.send(fd);
+    });
+
+    abortBtn.addEventListener('click', ()=>{
+      if(currentXHR){
+        currentXHR.abort();
+        currentXHR = null;
+        uploadBtn.disabled = false;
+        fileInput.disabled = false;
+        uploadMsg.textContent = "Subida cancelada";
+        resetProgress();
       }
     });
 
-    // ===== Listeners de filtros (una sola vez, fuera de render)
+    // ===== Listeners de filtros (una sola vez)
     const btnSinAnt = document.getElementById('fSinAnt');
     const btnSinRem = document.getElementById('fSinRem');
     const btnSinFacRem = document.getElementById('fSinFacRem');
@@ -253,21 +322,36 @@
       F_SIN_FACREM = !F_SIN_FACREM; toggleBtn(btnSinFacRem, F_SIN_FACREM); PAGE = 1; await loadData();
     });
 
-    // ===== Cargar datos
+    // ===== Cargar datos (con timeout suave para no colgar la UI)
     async function loadData(fromUpload=false){
       const tbody = document.getElementById("tbody");
       tbody.innerHTML = `<tr><td colspan="7"><div class="skeleton" style="width:100%"></div></td></tr>`;
 
-      // usar claves que tu backend espera (?missing_*)
       const params = new URLSearchParams();
       if (F_SIN_ANT)    params.set('missing_anticipo', '1');
       if (F_SIN_REM)    params.set('missing_remision', '1');
       if (F_SIN_FACREM) params.set('missing_facrem', '1');
 
       const url = params.toString() ? `/vv/data?${params.toString()}` : '/vv/data';
-      const res = await fetch(url);
 
-      if(!res.ok){ tbody.innerHTML = `<tr><td colspan="7">No se pudo cargar.</td></tr>`; return; }
+      // timeout de 30s para evitar “cargando infinito”
+      const ctrl = new AbortController();
+      const t = setTimeout(()=>ctrl.abort(), 30000);
+
+      let res;
+      try{
+        res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
+      }catch(e){
+        tbody.innerHTML = `<tr><td colspan="7">No se pudo cargar (timeout o red).</td></tr>`;
+        clearTimeout(t);
+        return;
+      }
+      clearTimeout(t);
+
+      if(!res.ok){
+        tbody.innerHTML = `<tr><td colspan="7">No se pudo cargar.</td></tr>`;
+        return;
+      }
       const json = await res.json();
       DATA = json.data || [];
       document.getElementById("src").textContent = json.source ? `Fuente: ${json.source}` : "Fuente: —";
@@ -277,10 +361,15 @@
       if(!fromUpload){ document.getElementById('q').value = ""; }
     }
 
-    // ===== Búsqueda
-    document.getElementById('q').addEventListener('input', ()=>{
-      PAGE = 1;
-      applyFiltersAndRender();
+    // ===== Búsqueda (debounce)
+    const qInput = document.getElementById('q');
+    let qTimer = null;
+    qInput.addEventListener('input', ()=>{
+      clearTimeout(qTimer);
+      qTimer = setTimeout(()=>{
+        PAGE = 1;
+        applyFiltersAndRender();
+      }, 200);
     });
 
     // ===== Per page
@@ -332,7 +421,8 @@
 
     // ===== Filtro + orden + render
     function applyFiltersAndRender(){
-      const q = document.getElementById('q').value.trim().toLowerCase();
+      const q = qInput.value.trim().toLowerCase();
+      // filtrar SOLO por PEDIDO para mantener performance
       VIEW = DATA.filter(r => (getK(r,'PEDIDO')+"").toLowerCase().includes(q));
       render();
     }
@@ -366,12 +456,12 @@
         `Mostrando ${slice.length} de ${total} resultados — orden: ${SORTKEY} (${SORTDIR}) — filtros: ${activos}`;
 
       const tbody = document.getElementById("tbody");
-      tbody.innerHTML = "";
+      // construir HTML con join (más rápido que muchos appendChild)
       if(!slice.length){
         tbody.innerHTML = `<tr><td colspan="7">Sin resultados.</td></tr>`;
         return;
       }
-
+      let html = "";
       for(const r of slice){
         const fecha   = getK(r,"FECHA");
         const pedido  = getK(r,"PEDIDO");
@@ -381,24 +471,23 @@
         const status  = (getK(r,"STATUS")||"").toLowerCase();
         const vend    = getK(r,"VENDEDOR");
 
-        // status chip
         let sClass = "s-pend", sText = "Por surtir";
         if(status.includes("factur")){ sClass="s-fact"; sText="Facturado"; }
         else if(status.includes("anticipo")){ sClass="s-anticipo"; sText="Con anticipo"; }
         else if(status.includes("surt")){ sClass="s-surtido"; sText="Surtido"; }
 
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${fecha||""}</td>
-          <td><span class="chip">${pedido||""}</span></td>
-          <td>${rem||""}</td>
-          <td>${fant||""}</td>
-          <td>${frem||""}</td>
-          <td><span class="chip status ${sClass}">${sText}</span></td>
-          <td>${vend||""}</td>
-        `;
-        tbody.appendChild(tr);
+        html += `
+          <tr>
+            <td>${fecha||""}</td>
+            <td><span class="chip">${pedido||""}</span></td>
+            <td>${rem||""}</td>
+            <td>${fant||""}</td>
+            <td>${frem||""}</td>
+            <td><span class="chip status ${sClass}">${sText}</span></td>
+            <td>${vend||""}</td>
+          </tr>`;
       }
+      tbody.innerHTML = html;
     }
 
     // Auto refresh cada 2 min si ya autenticado
