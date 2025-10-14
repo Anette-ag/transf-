@@ -33,7 +33,7 @@ app.secret_key = os.getenv('SECRET_KEY', 'cambia-esto-en-produccion')
 csrf = CSRFProtect(app)
 
 # Contraseña del panel (usa variable de entorno en prod)
-app.config["VV_SECRET"] = os.environ.get("VV_SECRET", "admin123")
+app.config["VV_SECRET"] = os.environ.get("VV_SECRET", "Hidro8303")
 # Si VV_EXCEL_PATH no existe, el panel usará automáticamente el último .xlsx/.xls en UPLOAD_FOLDER
 app.config["VV_EXCEL_PATH"] = os.environ.get("VV_EXCEL_PATH", "rem_pendientes.xlsx")
 
