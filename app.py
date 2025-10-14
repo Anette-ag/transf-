@@ -245,50 +245,48 @@ def allowed_file(filename):
 @login_required
 @csrf.exempt
 def vv_upload():
+    """
+    Subida rápida: guarda el Excel y responde de inmediato.
+    El procesamiento pesado ocurre cuando el front llama a /vv/data.
+    """
     if not session.get("vv_ok"):
         return jsonify({"error": "No autorizado"}), 401
 
     try:
+        # Validaciones básicas
         if "file" not in request.files:
             return jsonify({"error": "No se envió archivo"}), 400
 
         file = request.files["file"]
-        if file.filename == "":
+        if not file or file.filename.strip() == "":
             return jsonify({"error": "Nombre de archivo vacío"}), 400
 
-        if not file or not allowed_file(file.filename):
+        if not allowed_file(file.filename):
             return jsonify({"error": "Formato no permitido. Solo .xlsx o .xls"}), 400
 
-        # Guardar archivo
+        # Guardar archivo de forma segura en /uploads
         fname = secure_filename(file.filename)
         path = os.path.join(UPLOAD_FOLDER, fname)
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
         file.save(path)
 
-        # Limpiar caché COMPLETAMENTE
+        # Limpiar caché COMPLETAMENTE para que /vv/data recalcule con el nuevo archivo
         _VV_CACHE["mtime"] = None
         _VV_CACHE["rows"] = []
 
-        # Procesar inmediatamente y obtener resultados
-        test_rows = _vv_load_rows_from_excel()
-        
-        if len(test_rows) == 0:
-            return jsonify({
-                "ok": False, 
-                "filename": fname,
-                "message": "El archivo se subió pero no se encontraron datos válidos. Revisa los logs.",
-                "rows_processed": 0
-            })
-        
+        # ⚠️ Ya NO procesamos aquí para evitar timeouts en Render.
+        # El front llamará a /vv/data y ahí se hará el consolidado.
         return jsonify({
-            "ok": True, 
+            "ok": True,
             "filename": fname,
-            "message": f"✅ Archivo procesado correctamente. Se encontraron {len(test_rows)} filas.",
-            "rows_processed": len(test_rows)
-        })
+            "message": "Archivo subido. Procesando al solicitar /vv/data.",
+            "queued": True
+        }), 200
 
     except Exception as e:
-        app.logger.error(f"Error en upload: {str(e)}")
+        app.logger.error(f"[vv_upload] Error: {str(e)}")
         return jsonify({"error": f"Error: {str(e)}"}), 500
+
 
 @app.get("/vv/inspect-file")
 @login_required
@@ -1686,7 +1684,7 @@ app.config.update(
     'pool_timeout': 30,
 },
     UPLOAD_FOLDER=UPLOAD_FOLDER,
-    MAX_CONTENT_LENGTH = 64 * 1024 * 1024,
+    MAX_CONTENT_LENGTH = 32 * 1024 * 1024,
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
