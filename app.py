@@ -454,29 +454,28 @@ def _vv_load_rows_from_excel() -> list:
     from datetime import date, datetime
     from unidecode import unidecode
 
-    # ---------- Persistencia ligera ----------
-    STORE_PATH = os.path.join(UPLOAD_FOLDER, "_vv_store.json")
+# ---------- Persistencia ligera ----------
+STORE_PATH = os.path.join(UPLOAD_FOLDER, "_vv_store.json")
 
-    def _vv_store_load() -> list:
-        try:
-            rec = VVKV.query.get("vv_rows")
-            if rec and isinstance(rec.v, list):
-                return rec.v
-        except Exception:
-            pass
-        return []
+def _vv_store_load() -> list:
+    try:
+        if os.path.exists(STORE_PATH):
+            with open(STORE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+    except Exception:
+        # Loguea pero no rompe el flujo
+        app.logger.exception("[vv] _vv_store_load failed")
+    return []
 
-    def _vv_store_save(rows: list) -> None:
-        try:
-            rec = VVKV.query.get("vv_rows")
-            if rec is None:
-                rec = VVKV(k="vv_rows", v=rows)
-                db.session.add(rec)
-            else:
-                rec.v = rows
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
+def _vv_store_save(rows: list) -> None:
+    try:
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        with open(STORE_PATH, "w", encoding="utf-8") as f:
+            json.dump(rows, f, ensure_ascii=False)
+    except Exception:
+        app.logger.exception("[vv] _vv_store_save failed")
 
 
     # ---------- Utils ----------
