@@ -458,13 +458,13 @@ def _vv_load_rows_from_excel() -> list:
     STORE_PATH = os.path.join(UPLOAD_FOLDER, "_vv_store.json")
 
     def _vv_store_load() -> list:
-    try:
-        rec = VVKV.query.get("vv_rows")
-        if rec and isinstance(rec.v, list):
-            return rec.v
-    except Exception:
-        pass
-    return []
+        try:
+            rec = VVKV.query.get("vv_rows")
+            if rec and isinstance(rec.v, list):
+                return rec.v
+        except Exception:
+            pass
+        return []
 
     def _vv_store_save(rows: list) -> None:
         try:
