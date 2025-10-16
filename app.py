@@ -458,23 +458,26 @@ def _vv_load_rows_from_excel() -> list:
     STORE_PATH = os.path.join(UPLOAD_FOLDER, "_vv_store.json")
 
     def _vv_store_load() -> list:
-        try:
-            if os.path.exists(STORE_PATH):
-                with open(STORE_PATH, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, list):
-                    return data
-        except Exception:
-            pass
-        return []
+    try:
+        rec = VVKV.query.get("vv_rows")
+        if rec and isinstance(rec.v, list):
+            return rec.v
+    except Exception:
+        pass
+    return []
 
     def _vv_store_save(rows: list) -> None:
         try:
-            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-            with open(STORE_PATH, "w", encoding="utf-8") as f:
-                json.dump(rows, f, ensure_ascii=False)
+            rec = VVKV.query.get("vv_rows")
+            if rec is None:
+                rec = VVKV(k="vv_rows", v=rows)
+                db.session.add(rec)
+            else:
+                rec.v = rows
+            db.session.commit()
         except Exception:
-            pass
+            db.session.rollback()
+
 
     # ---------- Utils ----------
     def _vv_is_date_like(v: object) -> bool:
@@ -841,11 +844,21 @@ def _vv_load_rows_from_excel() -> list:
                                     return cols_norm.index(name)
                             return None
 
-                        c_fecha = _find_named_col(["fecha","fec_ped","fch_ped"])
-                        c_ped   = _find_named_col(["pedido","no_ped","no ped","nopedido","numero de pedido"])
+                        # 👇 añadimos alias usados por tus archivos
+                        c_fecha = _find_named_col([
+                            "fecha","fec_ped","fch_ped",
+                            "f_alta_ped","f alta ped","fecha alta pedido"
+                        ])
+                        c_ped   = _find_named_col([
+                            "pedido","no_ped","no ped","nopedido","numero de pedido"
+                        ])
                         c_serie = _find_named_col(["serie"])
-                        c_vend  = _find_named_col(["vendedor","agente","seller"])
+                        c_vend  = _find_named_col([
+                            "vendedor","agente","seller",
+                            "nom_age","nom age","cve_age"  # 👈 alias de tu archivo
+                        ])
                         c_stat  = _find_named_col(["status","estatus","estado"])
+
 
                         pedidos_list = []
                         for _, row in df_ped.iterrows():
@@ -980,6 +993,15 @@ def _vv_load_rows_from_excel() -> list:
                         real_name = [s for s in xls.sheet_names if s.lower() == 'rem_pendientes'][0]
                         df_rp = pd.read_excel(combined_path, sheet_name=real_name, dtype=str, engine=eng)
                         df_rp.columns = [unidecode(str(c)).strip().lower() for c in df_rp.columns]
+                        # Normaliza alias comunes
+                        df_rp = df_rp.rename(columns={
+                            "f_alta_ped": "fecha",
+                            "f alta ped": "fecha",
+                            "nom_age": "vendedor",
+                            "nom age": "vendedor",
+                            "factura de remisión": "factura de remision"
+                        })
+
                         needed = ["fecha","pedido","remisiones","factura de anticipo","factura de remision","status","vendedor"]
                         if all(col in df_rp.columns for col in needed):
                             def juniq(series):
@@ -1120,16 +1142,27 @@ def _vv_load_rows_from_excel() -> list:
             try:
                 dfp = pd.read_excel(path_pedidos, header=header_row_idx, dtype=str)
                 cols_norm = [unidecode(str(c)).strip().lower() for c in dfp.columns]
+
                 def _find_named_col(names):
                     for name in names:
                         if name in cols_norm:
                             return cols_norm.index(name)
                     return None
-                c_fecha = _find_named_col(["fecha","fec_ped","fch_ped"])
-                c_ped   = _find_named_col(["pedido","no_ped","no ped","nopedido","numero de pedido"])
+
+                c_fecha = _find_named_col([
+                    "fecha","fec_ped","fch_ped",
+                    "f_alta_ped","f alta ped","fecha alta pedido"
+                ])
+                c_ped   = _find_named_col([
+                    "pedido","no_ped","no ped","nopedido","numero de pedido"
+                ])
                 c_serie = _find_named_col(["serie"])
-                c_vend  = _find_named_col(["vendedor","agente","seller"])
+                c_vend  = _find_named_col([
+                    "vendedor","agente","seller",
+                    "nom_age","nom age","cve_age"
+                ])
                 c_stat  = _find_named_col(["status","estatus","estado"])
+
 
                 if c_ped is not None:
                     for _, row in dfp.iterrows():
@@ -1779,6 +1812,16 @@ class Venta(db.Model):
     metodo_de_pago = db.Column(db.String(50))
     total_2 = db.Column(db.Float)
     pago_1 = db.Column(db.String(50))
+
+class VVKV(db.Model):
+    __tablename__ = "vv_kv"
+    k = db.Column(db.String(50), primary_key=True)
+    v = db.Column(db.JSON, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+with app.app_context():
+    db.create_all()
+
 
 def _to_float(x):
     if x is None:
