@@ -695,7 +695,7 @@ def _vv_load_rows_from_excel() -> list:
         return None
 
     def _find_upload_by_tokens(*token_groups):
-        """Devuelve el primer archivo en uploads/ que matchee los tokens."""
+        """Devuelve el primer archivo en uploads/ que matchee los tokens (el más reciente)."""
         try:
             files = os.listdir(UPLOAD_FOLDER)
         except Exception:
@@ -723,7 +723,6 @@ def _vv_load_rows_from_excel() -> list:
     # ---------- Escáner de FACT_ANT (por encabezados o A/AW) ----------
     def _scan_fact_ant_pairs_from_workbook(xls_path: str, engine: str) -> list[tuple[str, str]]:
         pairs: list[tuple[str, str]] = []
-
         try:
             with pd.ExcelFile(xls_path, engine=engine) as xls:
                 pedido_keys = {"pedi_rem", "pedirem", "no_peda", "no_ped", "no ped", "pedido"}
@@ -803,7 +802,6 @@ def _vv_load_rows_from_excel() -> list:
                                 pairs.append((fac, pid))
         except Exception:
             return pairs
-
         return pairs
 
     # ---------- Lector robusto de fact_ant (con/sin encabezados) ----------
@@ -890,9 +888,9 @@ def _vv_load_rows_from_excel() -> list:
         return out
 
     # ---------- Localiza fuentes ----------
-    path_pedidos  = _find_upload_by_tokens(("pedido",), ("pedidos",))
+    path_pedidos  = _find_upload_by_tokens(("pedido",), ("pedidos",), ("rem_ped",))
     path_op2      = _find_upload_by_tokens(("op2",), ("remision",), ("remisiones",))
-    path_fact_ant = _find_upload_by_tokens(("fact_ant",), ("anticipo",))
+    path_fact_ant = _find_upload_by_tokens(("fact_ant",), ("fac_ant",), ("anticipo",))
     path_fact2    = _find_upload_by_tokens(("fact2",), ("fact", "2"))
     combined_path = _vv_pick_excel()
 
@@ -913,7 +911,7 @@ def _vv_load_rows_from_excel() -> list:
 
     try:
         # =====================================================================
-        # PRIORIDAD 1: Combinado con HOJA PEDIDO → construir maestro por POSICIÓN
+        # PRIORIDAD 1: Libro combinado con hoja PEDIDO (base) + sueltos para complementar
         # =====================================================================
         if combined_path and os.path.exists(combined_path):
             eng = _open_engine(combined_path)
@@ -963,9 +961,9 @@ def _vv_load_rows_from_excel() -> list:
                                 'facturas_remision': []
                             })
 
-                        # OP2 / FACT_ANT / FACT2
-                        sheets_data = {'op2': pd.DataFrame(), 'fact2': pd.DataFrame()}
+                        idx_by_pedido = {p['pedido']: p for p in pedidos_list}
 
+                        # === OP2 dentro del combinado (si existe)
                         with pd.ExcelFile(combined_path, engine=eng) as xls2:
                             sheet_op2 = None
                             for s in xls2.sheet_names:
@@ -974,12 +972,35 @@ def _vv_load_rows_from_excel() -> list:
                                     sheet_op2 = s
                                     break
                         if sheet_op2:
-                            sheets_data['op2'] = pd.read_excel(combined_path, sheet_name=sheet_op2,
-                                                               header=None, dtype=str, engine=eng)
+                            df_op2 = pd.read_excel(combined_path, sheet_name=sheet_op2,
+                                                   header=None, dtype=str, engine=eng)
+                            if not df_op2.empty:
+                                rem_col = _vv_find_col_by_name(df_op2, ["no_rem","no rem","remision","remisiones"]) or 0
+                                ped_col = _vv_find_col_by_name(df_op2, ["no_ped","no ped","pedido"]) or 12
+                                by_pedido = {}
+                                for i in range(df_op2.shape[0]):
+                                    if df_op2.shape[1] <= max(rem_col, ped_col):
+                                        break
+                                    rem = _vv_folio_text(df_op2.iloc[i, rem_col])
+                                    pid = _vv_norm_pedido_num_floatsafe(df_op2.iloc[i, ped_col])
+                                    if not pid or pid == "0" or not rem or rem == "0":
+                                        continue
+                                    by_pedido.setdefault(pid, set()).add(rem)
+                                for pid, rems in by_pedido.items():
+                                    tgt = idx_by_pedido.get(pid)
+                                    if tgt:
+                                        for rfolio in sorted(rems):
+                                            if rfolio not in tgt['remisiones']:
+                                                tgt['remisiones'].append(rfolio)
 
-                        # === FAC_ANT desde el mismo libro si existe
+                        # === FACT_ANT dentro del combinado (si existe)
                         fa_pairs = _scan_fact_ant_pairs_from_workbook(combined_path, eng)
+                        for fac, pid in fa_pairs or []:
+                            tgt = idx_by_pedido.get(pid)
+                            if tgt and fac not in tgt['facturas_anticipo']:
+                                tgt['facturas_anticipo'].append(fac)
 
+                        # === FACT2 dentro del combinado (si existe)
                         with pd.ExcelFile(combined_path, engine=eng) as xls3:
                             sheet_f2 = None
                             for s in xls3.sheet_names:
@@ -988,68 +1009,70 @@ def _vv_load_rows_from_excel() -> list:
                                     sheet_f2 = s
                                     break
                         if sheet_f2:
-                            sheets_data['fact2'] = pd.read_excel(combined_path, sheet_name=sheet_f2,
-                                                                 header=None, dtype=str, engine=eng)
+                            df_f2 = pd.read_excel(combined_path, sheet_name=sheet_f2,
+                                                  header=None, dtype=str, engine=eng)
+                            if not df_f2.empty and df_f2.shape[1] > 48:
+                                for i in range(df_f2.shape[0]):
+                                    fac = _vv_folio_text(df_f2.iloc[i, 0])
+                                    pid = _vv_norm_pedido_num_floatsafe(df_f2.iloc[i, 48])
+                                    if not pid or not fac:
+                                        continue
+                                    tgt = idx_by_pedido.get(pid)
+                                    if tgt and fac not in tgt['facturas_remision']:
+                                        tgt['facturas_remision'].append(fac)
 
-                        idx_by_pedido = {p['pedido']: p for p in pedidos_list}
+                        # === COMPLEMENTOS DESDE ARCHIVOS SUELTOS (para independencia del orden)
+                        # OP2 suelto
+                        if path_op2 and os.path.exists(path_op2):
+                            df_op2_s = pd.read_excel(path_op2, header=None, dtype=str)
+                            if not df_op2_s.empty:
+                                rem_col = _vv_find_col_by_name(df_op2_s, ["no_rem","no rem","remision","remisiones"]) or 0
+                                ped_col = _vv_find_col_by_name(df_op2_s, ["no_ped","no ped","pedido"]) or 12
+                                by_pedido = {}
+                                for i in range(df_op2_s.shape[0]):
+                                    if df_op2_s.shape[1] <= max(rem_col, ped_col):
+                                        break
+                                    rem = _vv_folio_text(df_op2_s.iloc[i, rem_col])
+                                    pid = _vv_norm_pedido_num_floatsafe(df_op2_s.iloc[i, ped_col])
+                                    if not pid or pid == "0" or not rem or rem == "0":
+                                        continue
+                                    by_pedido.setdefault(pid, set()).add(rem)
+                                for pid, rems in by_pedido.items():
+                                    tgt = idx_by_pedido.get(pid)
+                                    if tgt:
+                                        for rfolio in sorted(rems):
+                                            if rfolio not in tgt['remisiones']:
+                                                tgt['remisiones'].append(rfolio)
 
-                        # OP2 → Remisiones
-                        if not sheets_data['op2'].empty:
-                            df_op2 = sheets_data['op2']
-                            rem_col = _vv_find_col_by_name(df_op2, ["no_rem","no rem","remision","remisiones"]) or 0
-                            ped_col = _vv_find_col_by_name(df_op2, ["no_ped","no ped","pedido"]) or 12
-                            by_pedido = {}
-                            for i in range(df_op2.shape[0]):
-                                if df_op2.shape[1] <= max(rem_col, ped_col):
-                                    break
-                                rem = _vv_folio_text(df_op2.iloc[i, rem_col])
-                                pid = _vv_norm_pedido_num_floatsafe(df_op2.iloc[i, ped_col])
-                                if not pid or pid == "0" or not rem or rem == "0":
-                                    continue
-                                by_pedido.setdefault(pid, set()).add(rem)
-                            for pid, rems in by_pedido.items():
-                                tgt = idx_by_pedido.get(pid)
-                                if tgt:
-                                    for rfolio in sorted(rems):
-                                        if rfolio not in tgt['remisiones']:
-                                            tgt['remisiones'].append(rfolio)
-
-                        # FACT_ANT → Anticipo (del combinado)
-                        for fac, pid in fa_pairs or []:
-                            tgt = idx_by_pedido.get(pid)
-                            if tgt and fac not in tgt['facturas_anticipo']:
-                                tgt['facturas_anticipo'].append(fac)
-
-                        # FACT2 → Factura de remisión
-                        if not sheets_data['fact2'].empty and sheets_data['fact2'].shape[1] > 48:
-                            df_f2 = sheets_data['fact2']
-                            for i in range(df_f2.shape[0]):
-                                fac = _vv_folio_text(df_f2.iloc[i, 0])
-                                pid = _vv_norm_pedido_num_floatsafe(df_f2.iloc[i, 48])
-                                if not pid or not fac:
-                                    continue
-                                tgt = idx_by_pedido.get(pid)
-                                if tgt and fac not in tgt['facturas_remision']:
-                                    tgt['facturas_remision'].append(fac)
-
-                        # Si NO hubo anticipo en el combinado, intenta un archivo suelto fact_ant
-                        if (not fa_pairs):
-                            suelto = path_fact_ant
-                            if suelto and os.path.exists(suelto):
+                        # FACT_ANT suelto (además del del libro)
+                        if path_fact_ant and os.path.exists(path_fact_ant):
+                            try:
                                 try:
-                                    try:
-                                        df_fa_suelto = pd.read_excel(suelto, header=0, dtype=str)
-                                    except Exception:
-                                        df_fa_suelto = pd.read_excel(suelto, header=None, dtype=str)
-                                    fa_pairs_sueltos = _fa_pairs_from_df(df_fa_suelto)
-                                    for fac, pid in fa_pairs_sueltos:
-                                        tgt = idx_by_pedido.get(pid)
-                                        if tgt and fac not in tgt['facturas_anticipo']:
-                                            tgt['facturas_anticipo'].append(fac)
-                                except Exception as _e:
-                                    app.logger.warning(f"⚠️ No se pudo leer fact_ant suelto: {_e}")
+                                    df_fa_suelto = pd.read_excel(path_fact_ant, header=0, dtype=str)
+                                except Exception:
+                                    df_fa_suelto = pd.read_excel(path_fact_ant, header=None, dtype=str)
+                                fa_pairs_sueltos = _fa_pairs_from_df(df_fa_suelto)
+                                for fac, pid in fa_pairs_sueltos:
+                                    tgt = idx_by_pedido.get(pid)
+                                    if tgt and fac not in tgt['facturas_anticipo']:
+                                        tgt['facturas_anticipo'].append(fac)
+                            except Exception as _e:
+                                app.logger.warning(f"⚠️ No se pudo leer fact_ant suelto: {_e}")
 
-                        # Consolidado + merge
+                        # FACT2 suelto
+                        if path_fact2 and os.path.exists(path_fact2):
+                            df_f2_s = pd.read_excel(path_fact2, header=None, dtype=str)
+                            if not df_f2_s.empty and df_f2_s.shape[1] > 48:
+                                for i in range(df_f2_s.shape[0]):
+                                    fac = _vv_folio_text(df_f2_s.iloc[i, 0])
+                                    pid = _vv_norm_pedido_num_floatsafe(df_f2_s.iloc[i, 48])
+                                    if not pid or not fac:
+                                        continue
+                                    tgt = idx_by_pedido.get(pid)
+                                    if tgt and fac not in tgt['facturas_remision']:
+                                        tgt['facturas_remision'].append(fac)
+
+                        # Consolidado + merge con lo persistido
                         consolidated_rows = []
                         for p in pedidos_list:
                             rem_join = _vv_join_unique_sorted(p['remisiones'])
@@ -1070,7 +1093,7 @@ def _vv_load_rows_from_excel() -> list:
                         consolidated_rows = sorted(consolidated_rows, key=lambda r: r['pedido'])
                         merged_rows = _vv_merge_consolidated(persisted_rows, consolidated_rows)
 
-                        app.logger.info(f"🎉 CONSOLIDADO (combinado + merge): {len(merged_rows)}")
+                        app.logger.info(f"🎉 CONSOLIDADO (combinado + sueltos + merge): {len(merged_rows)}")
 
                         _VV_CACHE["mtime"] = cache_mtime
                         _VV_CACHE["rows"] = merged_rows
@@ -1081,7 +1104,7 @@ def _vv_load_rows_from_excel() -> list:
                     app.logger.warning(f"⚠️ Falló ruta 'combinado con PEDIDO': {e}")
 
         # =====================================================================
-        # PRIORIDAD 2: rem_pendientes como base + complementos (OP2 / FACT_ANT)
+        # PRIORIDAD 2: Hoja 'rem_pendientes' como base + sueltos (OP2 / FACT_ANT / FACT2)
         # =====================================================================
         base_rows = None
         if combined_path and os.path.exists(combined_path):
@@ -1089,7 +1112,8 @@ def _vv_load_rows_from_excel() -> list:
             if eng:
                 try:
                     with pd.ExcelFile(combined_path, engine=eng) as xls:
-                        if 'rem_pendientes' in [s.lower() for s in xls.sheet_names]:
+                        lower_names = [s.lower() for s in xls.sheet_names]
+                        if 'rem_pendientes' in lower_names:
                             real_name = [s for s in xls.sheet_names if s.lower() == 'rem_pendientes'][0]
                             df_rp = pd.read_excel(combined_path, sheet_name=real_name, dtype=str, engine=eng)
                             df_rp.columns = [unidecode(str(c)).strip().lower() for c in df_rp.columns]
@@ -1126,7 +1150,6 @@ def _vv_load_rows_from_excel() -> list:
 
                                 # FACT_ANT combinado o suelto
                                 fa_pairs = _scan_fact_ant_pairs_from_workbook(combined_path, eng)
-
                                 if (not fa_pairs) and path_fact_ant and os.path.exists(path_fact_ant):
                                     try:
                                         try:
@@ -1150,48 +1173,59 @@ def _vv_load_rows_from_excel() -> list:
                                             merged = sorted(set(existing + [fac]))
                                             row['factura_anticipo'] = ", ".join(merged)
 
+                                # OP2 suelto también complementa esta base
+                                if base_rows and path_op2 and os.path.exists(path_op2):
+                                    df_op2 = pd.read_excel(path_op2, header=None, dtype=str)
+                                    rem_col = _vv_find_col_by_name(df_op2, ["no_rem","no rem","remision","remisiones"]) or 0
+                                    ped_col = _vv_find_col_by_name(df_op2, ["no_ped","no ped","pedido"]) or 12
+                                    by_pedido = {}
+                                    for i in range(df_op2.shape[0]):
+                                        if df_op2.shape[1] <= max(rem_col, ped_col):
+                                            break
+                                        rem = _vv_folio_text(df_op2.iloc[i, rem_col])
+                                        pid = _vv_norm_pedido_num_floatsafe(df_op2.iloc[i, ped_col])
+                                        if not pid or pid == "0" or not rem or rem == "0":
+                                            continue
+                                        by_pedido.setdefault(pid, set()).add(rem)
+                                    idx_by_num = { _vv_norm_pedido_num(r['pedido']): r for r in base_rows }
+                                    for pid, rems in by_pedido.items():
+                                        row = idx_by_num.get(pid)
+                                        if row:
+                                            existing = [x.strip() for x in row['remisiones'].split(",") if x.strip()] if row['remisiones'] else []
+                                            merged = sorted(set(existing).union(rems))
+                                            row['remisiones'] = ", ".join(merged)
+
+                                # FACT2 suelto
+                                if base_rows and path_fact2 and os.path.exists(path_fact2):
+                                    df_f2 = pd.read_excel(path_fact2, header=None, dtype=str)
+                                    if not df_f2.empty and df_f2.shape[1] > 48:
+                                        idx_by_num = { _vv_norm_pedido_num(r['pedido']): r for r in base_rows }
+                                        for i in range(df_f2.shape[0]):
+                                            fac = _vv_folio_text(df_f2.iloc[i, 0])
+                                            pid = _vv_norm_pedido_num_floatsafe(df_f2.iloc[i, 48])
+                                            if not pid or not fac:
+                                                continue
+                                            row = idx_by_num.get(pid)
+                                            if row:
+                                                existing = [x.strip() for x in row['factura_remision'].split(",") if x.strip()] if row['factura_remision'] else []
+                                                merged = sorted(set(existing + [fac]))
+                                                row['factura_remision'] = ", ".join(merged)
+
                 except Exception as e:
                     app.logger.warning(f"⚠️ No se pudo usar 'rem_pendientes': {e}")
 
         if base_rows is not None:
-            # Completar con OP2 suelto
-            idx_by_num = {}
-            for row in base_rows:
-                num = _vv_norm_pedido_num(row['pedido'])
-                if num:
-                    idx_by_num.setdefault(num, row)
-
-            if path_op2 and os.path.exists(path_op2):
-                df_op2 = pd.read_excel(path_op2, header=None, dtype=str)
-                rem_col = _vv_find_col_by_name(df_op2, ["no_rem","no rem","remision","remisiones"]) or 0
-                ped_col = _vv_find_col_by_name(df_op2, ["no_ped","no ped","pedido"]) or 12
-                by_pedido = {}
-                for i in range(df_op2.shape[0]):
-                    if df_op2.shape[1] <= max(rem_col, ped_col):
-                        break
-                    rem = _vv_folio_text(df_op2.iloc[i, rem_col])
-                    pid = _vv_norm_pedido_num_floatsafe(df_op2.iloc[i, ped_col])
-                    if not pid or pid == "0" or not rem or rem == "0":
-                        continue
-                    by_pedido.setdefault(pid, set()).add(rem)
-                for pid, rems in by_pedido.items():
-                    row = idx_by_num.get(pid)
-                    if row:
-                        existing = [x.strip() for x in row['remisiones'].split(",") if x.strip()] if row['remisiones'] else []
-                        merged = sorted(set(existing).union(rems))
-                        row['remisiones'] = ", ".join(merged)
-
             consolidated_rows = sorted(base_rows, key=lambda r: r['pedido'])
             merged_rows = _vv_merge_consolidated(persisted_rows, consolidated_rows)
 
-            app.logger.info(f"🎉 CONSOLIDADO (rem_pendientes + compl. + merge): {len(merged_rows)}")
+            app.logger.info(f"🎉 CONSOLIDADO (rem_pendientes + sueltos + merge): {len(merged_rows)}")
             _VV_CACHE["mtime"] = cache_mtime
             _VV_CACHE["rows"] = merged_rows
             _vv_store_save(merged_rows)
             return merged_rows
 
         # =====================================================================
-        # PRIORIDAD 3: Multi-fuente suelta (PEDIDO.xlsx / OP2.xlsx / fact_ant.xlsx / fact2.xlsx)
+        # PRIORIDAD 3: Multi-fuente suelta (PEDIDOS / OP2 / FACT_ANT / FACT2) en cualquier orden
         # =====================================================================
         sheets_data = {"pedidos": pd.DataFrame(), "op2": pd.DataFrame(), "fact_ant": pd.DataFrame(), "fact2": pd.DataFrame()}
 
@@ -1376,6 +1410,7 @@ def _vv_load_rows_from_excel() -> list:
         rows = _vv_store_load()
         _VV_CACHE["rows"] = rows
         return rows
+
 
 
 @app.get("/vv/sheets-info")
