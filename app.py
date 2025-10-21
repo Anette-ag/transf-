@@ -28,59 +28,6 @@ import io
 # Inicialización de la aplicación
 app = Flask(__name__)
 
-# ==== CONFIG DB ROBUSTA PARA RENDER ====
-import os
-from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
-
-LOCAL_DATA_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), "data")
-os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
-
-def _effective_sqlalchemy_uri():
-    raw = (os.getenv("DATABASE_URL") or "").strip()
-    if not raw:
-        # respaldo local si no hay DATABASE_URL
-        return f"sqlite:///{os.path.join(LOCAL_DATA_DIR, 'database.db')}"
-
-    # normaliza esquema para psycopg3
-    raw = raw.replace("postgres://", "postgresql://")
-    p = urlparse(raw)
-    scheme = p.scheme
-    if scheme == "postgresql":
-        scheme = "postgresql+psycopg"  # <- driver correcto
-
-    # sslmode=require cuando NO es red interna de Render
-    q = dict(parse_qsl(p.query))
-    host = p.hostname or ""
-    if not host.endswith(".internal"):
-        q.setdefault("sslmode", "require")
-        q.setdefault("connect_timeout", "5")  # evita colgar workers
-
-    p2 = p._replace(scheme=scheme, query=urlencode(q))
-    return urlunparse(p2)
-
-app.config["SQLALCHEMY_DATABASE_URI"] = _effective_sqlalchemy_uri()
-app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-    "pool_pre_ping": True,
-    "pool_recycle": 300,
-    "pool_size": 5,
-    "max_overflow": 5,
-}
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
-from flask_sqlalchemy import SQLAlchemy
-db = SQLAlchemy(app)
-
-# Healthcheck que NO lanza excepción
-def db_ready() -> bool:
-    try:
-        with db.engine.connect() as conn:
-            conn.exec_driver_sql("SELECT 1")
-        return True
-    except Exception:
-        app.logger.error("DB no lista / error de conexión", exc_info=True)
-        return False
-
-
 # Usa una SECRET_KEY fija desde entorno en producción para no invalidar sesiones en cada deploy
 app.secret_key = os.getenv('SECRET_KEY', 'cambia-esto-en-produccion')
 csrf = CSRFProtect(app)
