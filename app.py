@@ -50,7 +50,12 @@ import socket
 from urllib.parse import urlencode, parse_qsl
 
 # ===== Helpers vv: leer TODAS las hojas del Excel y normalizar columnas =====
-_VV_CACHE = {"mtime": None, "rows": []}
+# Caché en memoria (asegurado)
+try:
+    _VV_CACHE
+except NameError:
+    _VV_CACHE = {"mtime": None, "rows": []}
+
 
 def _vv_slug(s: str) -> str:
     if not isinstance(s, str):
@@ -115,6 +120,117 @@ def _vv_normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = ""
     
     return df[required_columns]
+
+
+# ========= _vv_date_only SIN WARNING DE PANDAS ===============================
+def _vv_date_only(v) -> str:
+    """
+    Devuelve fecha en YYYY-MM-DD desde múltiples formatos.
+    Evita el warning de pandas cuando la cadena ya es ISO (YYYY-MM-DD).
+    """
+    from datetime import datetime as _dt, date as _date
+    import re as _re
+
+    if v is None:
+        return ""
+    if isinstance(v, _dt):
+        return v.date().isoformat()
+    if isinstance(v, _date):
+        return v.isoformat()
+
+    s = str(v).strip()
+    if not s:
+        return ""
+
+    # 1) ISO estricto: YYYY-MM-DD -> parse manual sin pandas
+    if _re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+        try:
+            return _dt.strptime(s, "%Y-%m-%d").date().isoformat()
+        except Exception:
+            return ""
+
+    # 2) dd/mm/yyyy o d/m/yy (México): usar dayfirst=True
+    if _re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2,4}", s):
+        dt = pd.to_datetime(s, errors="coerce", dayfirst=True)
+        return "" if pd.isna(dt) else dt.date().isoformat()
+
+    # 3) Fallback flexible
+    dt = pd.to_datetime(s, errors="coerce", dayfirst=True)
+    if pd.isna(dt):
+        dt = pd.to_datetime(s, errors="coerce", dayfirst=False)
+    return "" if pd.isna(dt) else dt.date().isoformat()
+# =============================================================================
+
+
+# ========= Helper y ruta para "Eliminar TODO" (con CSRF exempt) ==============
+def _vv_hard_reset(purge_uploads: bool = False) -> dict:
+    import glob, time, gc
+    result = {"store_deleted": False, "cache_cleared": False, "uploads_removed": 0}
+
+    store_path = os.path.join(UPLOAD_FOLDER, "_vv_store.json")
+    try:
+        if os.path.exists(store_path):
+            os.remove(store_path)
+            result["store_deleted"] = True
+    except Exception as e:
+        app.logger.warning(f"No se pudo borrar {store_path}: {e}")
+
+    # limpia caché en memoria
+    try:
+        if isinstance(_VV_CACHE, dict):
+            _VV_CACHE["rows"] = []
+            _VV_CACHE["mtime"] = None
+            result["cache_cleared"] = True
+    except Exception as e:
+        app.logger.warning(f"No se pudo limpiar _VV_CACHE: {e}")
+
+    def _try_remove(path: str, retries: int = 6, delay: float = 0.5) -> bool:
+        for i in range(retries):
+            try:
+                os.remove(path)
+                return True
+            except PermissionError as e:
+                # archivo bloqueado; intenta liberar recursos propios y reintenta
+                gc.collect()
+                time.sleep(delay)
+            except Exception as e:
+                app.logger.warning(f"No se pudo borrar {path}: {e}")
+                return False
+        app.logger.warning(f"No se pudo borrar {path}: bloqueado por otro proceso.")
+        return False
+
+    if purge_uploads:
+        try:
+            if os.path.isdir(UPLOAD_FOLDER):
+                for pat in ["*.xlsx", "*.xls", "*.csv", "*.json"]:
+                    for path in glob.glob(os.path.join(UPLOAD_FOLDER, pat)):
+                        if os.path.abspath(UPLOAD_FOLDER) in os.path.abspath(path):
+                            ok = _try_remove(path)
+                            if ok:
+                                result["uploads_removed"] += 1
+        except Exception as e:
+            app.logger.warning(f"Error al purgar uploads: {e}")
+
+    app.logger.info(f"VV RESET => {result}")
+    return result
+
+
+
+from flask import request, jsonify
+@csrf.exempt
+@app.post("/vv/delete-all.json")
+def vv_delete_all_json():
+    """
+    Endpoint que consume el botón '🗑️ Eliminar TODO' del frontend.
+    Acepta 'purge_uploads' en el form-data para borrar también archivos subidos.
+    CSRF exento porque se llama vía fetch sin token.
+    """
+    purge = bool(request.form.get("purge_uploads"))
+    info = _vv_hard_reset(purge_uploads=purge)
+    return jsonify({"ok": True, **info})
+# =============================================================================
+
+
 
 def debug_excel_structure(path):
     """Función para debug - analiza la estructura del Excel"""
@@ -417,6 +533,7 @@ def vv_file_info():
     except Exception as e:
         return jsonify({"error": str(e)})
 
+
 def _vv_load_rows_from_excel() -> list:
     # ---------- Helpers mínimos (por si no están arriba) ----------
     try:
@@ -449,10 +566,17 @@ def _vv_load_rows_from_excel() -> list:
                 return "Surtido"
             return "Por surtir"
 
-    import re, os, json, traceback
+    import re, os, json, traceback, warnings
     import pandas as pd
     from datetime import date, datetime
     from unidecode import unidecode
+
+    # Silenciar warning específico de pandas (por si queda algún parseo suelto)
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Parsing dates in %Y-%m-%d format when dayfirst=True",
+        category=UserWarning
+    )
 
     # ---------- Persistencia ligera ----------
     STORE_PATH = os.path.join(UPLOAD_FOLDER, "_vv_store.json")
@@ -486,7 +610,7 @@ def _vv_load_rows_from_excel() -> list:
             re.match(r"^\d{1,2}/\d{1,2}/\d{2,4}$", s)
         )
 
-    # >>> NUEVO: siempre devolver YYYY-MM-DD sin horas, y sin warnings de dayfirst
+    # Siempre devolver YYYY-MM-DD sin horas, y sin warnings de dayfirst
     def _vv_date_only(v) -> str:
         if v is None:
             return ""
@@ -501,7 +625,7 @@ def _vv_load_rows_from_excel() -> list:
             # México suele usar dd/mm/yyyy
             dt = pd.to_datetime(s, errors="coerce", dayfirst=True)
             if pd.isna(dt):
-                # último intento sin dayfirst por si vino en mm/dd/yyyy
+                # último intento sin dayfirst por si vino en mm/dd/yyyy o ISO
                 dt = pd.to_datetime(s, errors="coerce", dayfirst=False)
             return "" if pd.isna(dt) else dt.date().isoformat()
         except Exception:
@@ -596,91 +720,89 @@ def _vv_load_rows_from_excel() -> list:
         def _vv_pick_excel():
             return _find_upload_by_tokens(("rem_pend",), ("combinado",), ("master",))
 
-    # ---------- Escáner de FACT_ANT (igual que antes) ----------
+    # ---------- Escáner de FACT_ANT (por encabezados o A/AW) ----------
     def _scan_fact_ant_pairs_from_workbook(xls_path: str, engine: str) -> list[tuple[str, str]]:
         pairs: list[tuple[str, str]] = []
 
-        def _autodetect_header_row(df0: pd.DataFrame) -> int | None:
-            pedido_keys = {"pedi_rem", "pedirem", "no_peda", "no_ped", "no ped", "pedido"}
-            for r in range(min(15, len(df0))):
-                row_vals = [unidecode(str(x)).strip().lower() for x in df0.iloc[r].tolist()]
-                if any(v == "no_fac" for v in row_vals) and any(v in pedido_keys for v in row_vals):
-                    return r
-            return None
-
         try:
-            xls = pd.ExcelFile(xls_path, engine=engine)
+            with pd.ExcelFile(xls_path, engine=engine) as xls:
+                pedido_keys = {"pedi_rem", "pedirem", "no_peda", "no_ped", "no ped", "pedido"}
+
+                preferred = [s for s in xls.sheet_names if any(k in s.lower() for k in ["fact_ant", "fac_ant", "anticipo"])]
+
+                def _autodetect_header_row(df0: pd.DataFrame) -> int | None:
+                    for r in range(min(15, len(df0))):
+                        row_vals = [unidecode(str(x)).strip().lower() for x in df0.iloc[r].tolist()]
+                        if any(v == "no_fac" for v in row_vals) and any(v in pedido_keys for v in row_vals):
+                            return r
+                    return None
+
+                def _collect_from_sheet(sheet_name: str):
+                    nonlocal pairs
+                    try:
+                        df_raw = pd.read_excel(xls_path, sheet_name=sheet_name, header=None, dtype=str, engine=engine)
+                    except Exception:
+                        return
+                    if df_raw.empty:
+                        return
+                    hdr = _autodetect_header_row(df_raw)
+                    if hdr is not None:
+                        df = pd.read_excel(xls_path, sheet_name=sheet_name, header=hdr, dtype=str, engine=engine)
+                        cols = [unidecode(str(c)).strip().lower() for c in df.columns]
+                        if "no_fac" in cols and any(k in cols for k in pedido_keys):
+                            cfac = cols.index("no_fac")
+                            for key in ["pedi_rem", "pedirem", "no_peda", "no_ped", "no ped", "pedido"]:
+                                if key in cols:
+                                    cped = cols.index(key)
+                                    break
+                            for _, row in df.iterrows():
+                                fac = _vv_folio_text(row.iloc[cfac]) if cfac < len(row) else ""
+                                pid = _vv_norm_pedido_num_floatsafe(row.iloc[cped]) if cped < len(row) else ""
+                                if fac and pid and pid != "0":
+                                    pairs.append((fac, pid))
+                    else:
+                        if df_raw.shape[1] > 48:
+                            for i in range(df_raw.shape[0]):
+                                fac = _vv_folio_text(df_raw.iloc[i, 0])
+                                pid = _vv_norm_pedido_num_floatsafe(df_raw.iloc[i, 48])
+                                if fac and pid:
+                                    pairs.append((fac, pid))
+
+                for s in preferred:
+                    _collect_from_sheet(s)
+                    if pairs:
+                        return pairs
+
+                for s in xls.sheet_names:
+                    if s in preferred:
+                        continue
+                    try:
+                        df_raw = pd.read_excel(xls_path, sheet_name=s, header=None, dtype=str, engine=engine)
+                    except Exception:
+                        continue
+                    if df_raw.empty:
+                        continue
+                    hdr = _autodetect_header_row(df_raw)
+                    if hdr is None:
+                        continue
+                    try:
+                        df = pd.read_excel(xls_path, sheet_name=s, header=hdr, dtype=str, engine=engine)
+                    except Exception:
+                        continue
+                    cols = [unidecode(str(c)).strip().lower() for c in df.columns]
+                    if "no_fac" in cols and any(k in cols for k in pedido_keys):
+                        cfac = cols.index("no_fac")
+                        for key in ["pedi_rem", "pedirem", "no_peda", "no_ped", "no ped", "pedido"]:
+                            if key in cols:
+                                cped = cols.index(key)
+                                break
+                        for _, row in df.iterrows():
+                            fac = _vv_folio_text(row.iloc[cfac]) if cfac < len(row) else ""
+                            pid = _vv_norm_pedido_num_floatsafe(row.iloc[cped]) if cped < len(row) else ""
+                            if fac and pid and pid != "0":
+                                pairs.append((fac, pid))
         except Exception:
             return pairs
-
-        pedido_keys = {"pedi_rem", "pedirem", "no_peda", "no_ped", "no ped", "pedido"}
-
-        preferred = [s for s in xls.sheet_names if any(k in s.lower() for k in ["fact_ant", "fac_ant", "anticipo"])]
-
-        def _collect_from_sheet(sheet_name: str):
-            nonlocal pairs
-            try:
-                df_raw = pd.read_excel(xls_path, sheet_name=sheet_name, header=None, dtype=str, engine=engine)
-            except Exception:
-                return
-            if df_raw.empty:
-                return
-            hdr = _autodetect_header_row(df_raw)
-            if hdr is not None:
-                df = pd.read_excel(xls_path, sheet_name=sheet_name, header=hdr, dtype=str, engine=engine)
-                cols = [unidecode(str(c)).strip().lower() for c in df.columns]
-                if "no_fac" in cols and any(k in cols for k in pedido_keys):
-                    cfac = cols.index("no_fac")
-                    for key in ["pedi_rem", "pedirem", "no_peda", "no_ped", "no ped", "pedido"]:
-                        if key in cols:
-                            cped = cols.index(key)
-                            break
-                    for _, row in df.iterrows():
-                        fac = _vv_folio_text(row.iloc[cfac]) if cfac < len(row) else ""
-                        pid = _vv_norm_pedido_num_floatsafe(row.iloc[cped]) if cped < len(row) else ""
-                        if fac and pid and pid != "0":
-                            pairs.append((fac, pid))
-            else:
-                if df_raw.shape[1] > 48:
-                    for i in range(df_raw.shape[0]):
-                        fac = _vv_folio_text(df_raw.iloc[i, 0])
-                        pid = _vv_norm_pedido_num_floatsafe(df_raw.iloc[i, 48])
-                        if fac and pid:
-                            pairs.append((fac, pid))
-
-        for s in preferred:
-            _collect_from_sheet(s)
-            if pairs:
-                return pairs
-
-        for s in xls.sheet_names:
-            if s in preferred:
-                continue
-            try:
-                df_raw = pd.read_excel(xls_path, sheet_name=s, header=None, dtype=str, engine=engine)
-            except Exception:
-                continue
-            if df_raw.empty:
-                continue
-            hdr = _autodetect_header_row(df_raw)
-            if hdr is None:
-                continue
-            try:
-                df = pd.read_excel(xls_path, sheet_name=s, header=hdr, dtype=str, engine=engine)
-            except Exception:
-                continue
-            cols = [unidecode(str(c)).strip().lower() for c in df.columns]
-            if "no_fac" in cols and any(k in cols for k in pedido_keys):
-                cfac = cols.index("no_fac")
-                for key in ["pedi_rem", "pedirem", "no_peda", "no_ped", "no ped", "pedido"]:
-                    if key in cols:
-                        cped = cols.index(key)
-                        break
-                for _, row in df.iterrows():
-                    fac = _vv_folio_text(row.iloc[cfac]) if cfac < len(row) else ""
-                    pid = _vv_norm_pedido_num_floatsafe(row.iloc[cped]) if cped < len(row) else ""
-                    if fac and pid and pid != "0":
-                        pairs.append((fac, pid))
 
         return pairs
 
@@ -716,11 +838,6 @@ def _vv_load_rows_from_excel() -> list:
 
     # ---------- Merge incremental + persistencia ----------
     def _vv_merge_consolidated(old_rows: list, new_rows: list) -> list:
-        """
-        Une datos previos (old_rows) con nuevos (new_rows) sin perder nada.
-        Clave = número de pedido (solo dígitos). Une listas y conserva primeros no vacíos.
-        Respeta 'status' de Excel si existe; si no, lo deriva.
-        """
         def to_dict(rows):
             d = {}
             for r in rows or []:
@@ -757,7 +874,6 @@ def _vv_load_rows_from_excel() -> list:
             fasR = sorted(splitset(a.get('factura_remision','')) | splitset(b.get('factura_remision','')))
 
             pedido_label = _vv_clean_val(b.get('pedido','') or a.get('pedido','') or k)
-            # Respeta status de Excel si viene; si no, deriva:
             preferred_status = _vv_clean_val(b.get('status','') or a.get('status',''))
             derived_status = _vv_status_from(", ".join(rems), ", ".join(fasA), ", ".join(fasR))
             status = preferred_status or derived_status
@@ -773,124 +889,104 @@ def _vv_load_rows_from_excel() -> list:
             })
         return out
 
-    # Archivos sueltos (flexibles)
+    # ---------- Localiza fuentes ----------
     path_pedidos  = _find_upload_by_tokens(("pedido",), ("pedidos",))
     path_op2      = _find_upload_by_tokens(("op2",), ("remision",), ("remisiones",))
     path_fact_ant = _find_upload_by_tokens(("fact_ant",), ("anticipo",))
     path_fact2    = _find_upload_by_tokens(("fact2",), ("fact", "2"))
-
-    # Excel combinado candidato (ej. rem_pendientes.xlsx)
     combined_path = _vv_pick_excel()
 
-    # ---------- Caché por mtime de todas las fuentes ----------
+    # ---------- Caché ----------
     mtimes = []
     for p in [path_pedidos, path_op2, path_fact_ant, path_fact2, combined_path]:
         if p and os.path.exists(p):
             mtimes.append(os.path.getmtime(p))
     cache_mtime = max(mtimes) if mtimes else None
 
-    # Fast-path cache
     if (cache_mtime is not None and
         _VV_CACHE["mtime"] == cache_mtime and
         _VV_CACHE["rows"] and len(_VV_CACHE["rows"]) > 0):
         app.logger.info("📦 Devolviendo datos desde caché")
         return _VV_CACHE["rows"]
 
-    # Siempre partimos de lo que ya tengamos persistido
     persisted_rows = _vv_store_load()
 
     try:
         # =====================================================================
-        # PRIORIDAD 1: Combinado con HOJA PEDIDO  → (maestro completo + cruces)
+        # PRIORIDAD 1: Combinado con HOJA PEDIDO → construir maestro por POSICIÓN
         # =====================================================================
         if combined_path and os.path.exists(combined_path):
             eng = _open_engine(combined_path)
             if eng:
                 try:
-                    xls = pd.ExcelFile(combined_path, engine=eng)
-
-                    # --- ¿Hay hoja PEDIDO? ---
-                    sheet_ped = None
-                    for s in xls.sheet_names:
-                        if "pedido" in s.lower():
-                            sheet_ped = s
-                            break
+                    with pd.ExcelFile(combined_path, engine=eng) as xls:
+                        sheet_ped = None
+                        for s in xls.sheet_names:
+                            if "pedido" in s.lower():
+                                sheet_ped = s
+                                break
 
                     if sheet_ped:
-                        # 1) Detecta fila de encabezados
-                        df_ped_raw = pd.read_excel(combined_path, sheet_name=sheet_ped,
-                                                   header=None, dtype=str, engine=eng)
+                        # Leer sin encabezados y detectar fila de headers
+                        df_ped = pd.read_excel(combined_path, sheet_name=sheet_ped,
+                                               header=None, dtype=str, engine=eng)
+
                         header_row_idx = None
-                        for i in range(min(10, len(df_ped_raw))):
-                            row_text = " | ".join([str(x) for x in df_ped_raw.iloc[i].fillna('').tolist() if str(x).strip()])
-                            if any(k in row_text.lower() for k in ['pedido','fecha','vendedor','no_ped','status','estatus','estado']):
+                        for i in range(min(10, len(df_ped))):
+                            row_text = " | ".join([str(x) for x in df_ped.iloc[i].fillna('').tolist() if str(x).strip()])
+                            if any(k in row_text.lower() for k in ['pedido','fecha','vendedor','no_ped','estatus','status']):
                                 header_row_idx = i
                                 app.logger.info(f"✅ Encabezados PEDIDOS en fila {i}: {row_text}")
                                 break
                         if header_row_idx is None:
                             header_row_idx = 0
 
-                        # 2) Relee como dataframe con encabezados
-                        df_ped = pd.read_excel(combined_path, sheet_name=sheet_ped,
-                                               header=header_row_idx, dtype=str, engine=eng)
-                        cols_norm = [unidecode(str(c)).strip().lower() for c in df_ped.columns]
-
-                        def _find_named_col(names):
-                            for name in names:
-                                if name in cols_norm:
-                                    return cols_norm.index(name)
-                            return None
-
-                        c_fecha = _find_named_col(["fecha","fec_ped","fch_ped"])
-                        c_ped   = _find_named_col(["pedido","no_ped","no ped","nopedido","numero de pedido"])
-                        c_serie = _find_named_col(["serie"])
-                        c_vend  = _find_named_col(["vendedor","agente","seller"])
-                        c_stat  = _find_named_col(["status","estatus","estado"])
-
+                        # POSICIONES: A=0 (fecha), B=1 (pedido), C=2 (serie), AA=26 (vendedor)
                         pedidos_list = []
-                        for _, row in df_ped.iterrows():
-                            fecha     = _vv_date_only(row.iloc[c_fecha]) if c_fecha is not None else _vv_date_only("")
-                            pedido    = _vv_norm_pedido_num_floatsafe(row.iloc[c_ped]) if c_ped is not None else ""
-                            serie_raw = _vv_text(row.iloc[c_serie]) if c_serie is not None else ""
-                            vendedor  = _vv_text(row.iloc[c_vend]) if c_vend is not None else ""
-                            status_xl = _vv_clean_val(row.iloc[c_stat]) if c_stat is not None else ""
-
+                        start_row = header_row_idx + 1
+                        for idx in range(start_row, len(df_ped)):
+                            fecha     = _vv_text(df_ped.iloc[idx, 0] if df_ped.shape[1] > 0  else "")
+                            pedido    = _vv_norm_pedido_num_floatsafe(df_ped.iloc[idx, 1] if df_ped.shape[1] > 1  else "")
+                            serie_raw = _vv_text(df_ped.iloc[idx, 2] if df_ped.shape[1] > 2  else "")
+                            vendedor  = _vv_text(df_ped.iloc[idx, 26] if df_ped.shape[1] > 26 else "")
+                            if not pedido:
+                                continue
                             serie = re.sub(r"[^A-Z]+", "", unidecode(serie_raw).upper()) or "ISI"
-                            if pedido:
-                                pedidos_list.append({
-                                    'fecha': fecha,
-                                    'pedido': pedido,
-                                    'serie': serie,
-                                    'vendedor': vendedor,
-                                    'status_excel': status_xl,  # <<<<< toma Status del Excel
-                                    'remisiones': [],
-                                    'facturas_anticipo': [],
-                                    'facturas_remision': []
-                                })
+                            pedidos_list.append({
+                                'fecha': fecha,
+                                'pedido': pedido,
+                                'serie': serie,
+                                'vendedor': vendedor,
+                                'status_excel': "",
+                                'remisiones': [],
+                                'facturas_anticipo': [],
+                                'facturas_remision': []
+                            })
 
+                        # OP2 / FACT_ANT / FACT2
                         sheets_data = {'op2': pd.DataFrame(), 'fact2': pd.DataFrame()}
 
-                        # OP2
-                        sheet_op2 = None
-                        for s in xls.sheet_names:
-                            sl = s.lower()
-                            if "op" in sl or "remision" in sl:
-                                sheet_op2 = s
-                                break
+                        with pd.ExcelFile(combined_path, engine=eng) as xls2:
+                            sheet_op2 = None
+                            for s in xls2.sheet_names:
+                                sl = s.lower()
+                                if "op" in sl or "remision" in sl:
+                                    sheet_op2 = s
+                                    break
                         if sheet_op2:
                             sheets_data['op2'] = pd.read_excel(combined_path, sheet_name=sheet_op2,
                                                                header=None, dtype=str, engine=eng)
 
-                        # FACT_ANT → pares
+                        # === FAC_ANT desde el mismo libro si existe
                         fa_pairs = _scan_fact_ant_pairs_from_workbook(combined_path, eng)
 
-                        # FACT2
-                        sheet_f2 = None
-                        for s in xls.sheet_names:
-                            sl = s.lower()
-                            if "fact2" in sl or ("fact" in sl and "2" in sl):
-                                sheet_f2 = s
-                                break
+                        with pd.ExcelFile(combined_path, engine=eng) as xls3:
+                            sheet_f2 = None
+                            for s in xls3.sheet_names:
+                                sl = s.lower()
+                                if "fact2" in sl or ("fact" in sl and "2" in sl):
+                                    sheet_f2 = s
+                                    break
                         if sheet_f2:
                             sheets_data['fact2'] = pd.read_excel(combined_path, sheet_name=sheet_f2,
                                                                  header=None, dtype=str, engine=eng)
@@ -918,7 +1014,7 @@ def _vv_load_rows_from_excel() -> list:
                                         if rfolio not in tgt['remisiones']:
                                             tgt['remisiones'].append(rfolio)
 
-                        # FACT_ANT → Anticipo
+                        # FACT_ANT → Anticipo (del combinado)
                         for fac, pid in fa_pairs or []:
                             tgt = idx_by_pedido.get(pid)
                             if tgt and fac not in tgt['facturas_anticipo']:
@@ -936,12 +1032,29 @@ def _vv_load_rows_from_excel() -> list:
                                 if tgt and fac not in tgt['facturas_remision']:
                                     tgt['facturas_remision'].append(fac)
 
+                        # Si NO hubo anticipo en el combinado, intenta un archivo suelto fact_ant
+                        if (not fa_pairs):
+                            suelto = path_fact_ant
+                            if suelto and os.path.exists(suelto):
+                                try:
+                                    try:
+                                        df_fa_suelto = pd.read_excel(suelto, header=0, dtype=str)
+                                    except Exception:
+                                        df_fa_suelto = pd.read_excel(suelto, header=None, dtype=str)
+                                    fa_pairs_sueltos = _fa_pairs_from_df(df_fa_suelto)
+                                    for fac, pid in fa_pairs_sueltos:
+                                        tgt = idx_by_pedido.get(pid)
+                                        if tgt and fac not in tgt['facturas_anticipo']:
+                                            tgt['facturas_anticipo'].append(fac)
+                                except Exception as _e:
+                                    app.logger.warning(f"⚠️ No se pudo leer fact_ant suelto: {_e}")
+
+                        # Consolidado + merge
                         consolidated_rows = []
                         for p in pedidos_list:
                             rem_join = _vv_join_unique_sorted(p['remisiones'])
                             fa_join  = _vv_join_unique_sorted(p['facturas_anticipo'])
                             fr_join  = _vv_join_unique_sorted(p['facturas_remision'])
-                            # Si viene status del Excel, úsalo; si está vacío, deriva:
                             status   = _vv_clean_val(p.get('status_excel','')) or _vv_status_from(rem_join, fa_join, fr_join)
                             pedido_label = f"{(p.get('serie') or '').strip()}-{_vv_clean_val(p['pedido'])}".strip("-")
                             consolidated_rows.append({
@@ -975,67 +1088,67 @@ def _vv_load_rows_from_excel() -> list:
             eng = _open_engine(combined_path)
             if eng:
                 try:
-                    xls = pd.ExcelFile(combined_path, engine=eng)
-                    if 'rem_pendientes' in [s.lower() for s in xls.sheet_names]:
-                        real_name = [s for s in xls.sheet_names if s.lower() == 'rem_pendientes'][0]
-                        df_rp = pd.read_excel(combined_path, sheet_name=real_name, dtype=str, engine=eng)
-                        df_rp.columns = [unidecode(str(c)).strip().lower() for c in df_rp.columns]
-                        needed = ["fecha","pedido","remisiones","factura de anticipo","factura de remision","status","vendedor"]
-                        if all(col in df_rp.columns for col in needed):
-                            def juniq(series):
-                                xs = [_vv_clean_val(x) for x in series if _vv_clean_val(x)]
-                                return ", ".join(sorted(set(xs))) if xs else ""
-                            def first(series):
-                                for x in series:
-                                    v = _vv_clean_val(x)
-                                    if v:
-                                        return v
-                                return ""
-                            out = (df_rp.groupby('pedido', as_index=False).agg({
-                                'fecha': first,
-                                'remisiones': juniq,
-                                'factura de anticipo': juniq,
-                                'factura de remision': juniq,
-                                'status': first,
-                                'vendedor': first
-                            }))
-                            base_rows = []
-                            for _, r in out.iterrows():
-                                base_rows.append({
-                                    'fecha': _vv_date_only(r.get('fecha','')),
-                                    'pedido': _vv_clean_val(r.get('pedido','')),
-                                    'remisiones': _vv_clean_val(r.get('remisiones','')),
-                                    'factura_anticipo': _vv_clean_val(r.get('factura de anticipo','')),
-                                    'factura_remision': _vv_clean_val(r.get('factura de remision','')),
-                                    'status': _vv_clean_val(r.get('status','')),   # respeta status de hoja
-                                    'vendedor': _vv_clean_val(r.get('vendedor','')),
-                                })
-                            app.logger.info(f"✅ Base de rem_pendientes: {len(base_rows)}")
+                    with pd.ExcelFile(combined_path, engine=eng) as xls:
+                        if 'rem_pendientes' in [s.lower() for s in xls.sheet_names]:
+                            real_name = [s for s in xls.sheet_names if s.lower() == 'rem_pendientes'][0]
+                            df_rp = pd.read_excel(combined_path, sheet_name=real_name, dtype=str, engine=eng)
+                            df_rp.columns = [unidecode(str(c)).strip().lower() for c in df_rp.columns]
+                            needed = ["fecha","pedido","remisiones","factura de anticipo","factura de remision","status","vendedor"]
+                            if all(col in df_rp.columns for col in needed):
+                                def juniq(series):
+                                    xs = [_vv_clean_val(x) for x in series if _vv_clean_val(x)]
+                                    return ", ".join(sorted(set(xs))) if xs else ""
+                                def first(series):
+                                    for x in series:
+                                        v = _vv_clean_val(x)
+                                        if v:
+                                            return v
+                                    return ""
+                                out = (df_rp.groupby('pedido', as_index=False).agg({
+                                    'fecha': first,
+                                    'remisiones': juniq,
+                                    'factura de anticipo': juniq,
+                                    'factura de remision': juniq,
+                                    'status': first,
+                                    'vendedor': first
+                                }))
+                                base_rows = []
+                                for _, r in out.iterrows():
+                                    base_rows.append({
+                                        'fecha': _vv_date_only(r.get('fecha','')),
+                                        'pedido': _vv_clean_val(r.get('pedido','')),
+                                        'remisiones': _vv_clean_val(r.get('remisiones','')),
+                                        'factura_anticipo': _vv_clean_val(r.get('factura de anticipo','')),
+                                        'factura_remision': _vv_clean_val(r.get('factura de remision','')),
+                                        'status': _vv_clean_val(r.get('status','')),
+                                        'vendedor': _vv_clean_val(r.get('vendedor','')),
+                                    })
 
-                            fa_pairs = _scan_fact_ant_pairs_from_workbook(combined_path, eng)
+                                # FACT_ANT combinado o suelto
+                                fa_pairs = _scan_fact_ant_pairs_from_workbook(combined_path, eng)
 
-                            if (not fa_pairs) and path_fact_ant and os.path.exists(path_fact_ant):
-                                try:
+                                if (not fa_pairs) and path_fact_ant and os.path.exists(path_fact_ant):
                                     try:
-                                        df_fa_suelto = pd.read_excel(path_fact_ant, header=0, dtype=str)
-                                    except Exception:
-                                        df_fa_suelto = pd.read_excel(path_fact_ant, header=None, dtype=str)
-                                    fa_pairs = _fa_pairs_from_df(df_fa_suelto)
-                                except Exception as _e:
-                                    app.logger.warning(f"⚠️ No se pudo leer fact_ant suelto: {_e}")
+                                        try:
+                                            df_fa_suelto = pd.read_excel(path_fact_ant, header=0, dtype=str)
+                                        except Exception:
+                                            df_fa_suelto = pd.read_excel(path_fact_ant, header=None, dtype=str)
+                                        fa_pairs = _fa_pairs_from_df(df_fa_suelto)
+                                    except Exception as _e:
+                                        app.logger.warning(f"⚠️ No se pudo leer fact_ant suelto: {_e}")
 
-                            if fa_pairs and base_rows:
-                                idx_by_num = {}
-                                for row in base_rows:
-                                    num = _vv_norm_pedido_num(row['pedido'])
-                                    if num:
-                                        idx_by_num.setdefault(num, row)
-                                for fac, pid in fa_pairs:
-                                    row = idx_by_num.get(pid)
-                                    if row:
-                                        existing = [x.strip() for x in row['factura_anticipo'].split(",") if x.strip()] if row['factura_anticipo'] else []
-                                        merged = sorted(set(existing + [fac]))
-                                        row['factura_anticipo'] = ", ".join(merged)
+                                if fa_pairs and base_rows:
+                                    idx_by_num = {}
+                                    for row in base_rows:
+                                        num = _vv_norm_pedido_num(row['pedido'])
+                                        if num:
+                                            idx_by_num.setdefault(num, row)
+                                    for fac, pid in fa_pairs:
+                                        row = idx_by_num.get(pid)
+                                        if row:
+                                            existing = [x.strip() for x in row['factura_anticipo'].split(",") if x.strip()] if row['factura_anticipo'] else []
+                                            merged = sorted(set(existing + [fac]))
+                                            row['factura_anticipo'] = ", ".join(merged)
 
                 except Exception as e:
                     app.logger.warning(f"⚠️ No se pudo usar 'rem_pendientes': {e}")
@@ -1084,22 +1197,17 @@ def _vv_load_rows_from_excel() -> list:
 
         if path_pedidos and os.path.exists(path_pedidos):
             sheets_data["pedidos"] = pd.read_excel(path_pedidos, header=None, dtype=str)
-            app.logger.info(f"✅ PEDIDOS desde archivo: {os.path.basename(path_pedidos)}")
         if path_op2 and os.path.exists(path_op2):
             sheets_data["op2"] = pd.read_excel(path_op2, header=None, dtype=str)
-            app.logger.info(f"✅ OP2 desde archivo: {os.path.basename(path_op2)}")
         if path_fact_ant and os.path.exists(path_fact_ant):
             try:
                 _tmpfa = pd.read_excel(path_fact_ant, header=0, dtype=str)
                 sheets_data["fact_ant"] = _tmpfa
             except Exception:
                 sheets_data["fact_ant"] = pd.read_excel(path_fact_ant, header=None, dtype=str)
-            app.logger.info(f"✅ FACT_ANT desde archivo: {os.path.basename(path_fact_ant)}")
         if path_fact2 and os.path.exists(path_fact2):
             sheets_data["fact2"] = pd.read_excel(path_fact2, header=None, dtype=str)
-            app.logger.info(f"✅ FACT2 desde archivo: {os.path.basename(path_fact2)}")
 
-        # Construcción del maestro
         pedidos_list = []
 
         def _build_master_from_pedidos(df_pedidos: pd.DataFrame):
@@ -1109,65 +1217,26 @@ def _vv_load_rows_from_excel() -> list:
             header_row_idx = None
             for i in range(min(10, len(df_pedidos))):
                 row_text = " | ".join([str(x) for x in df_pedidos.iloc[i].fillna('').tolist() if str(x).strip()])
-                if any(k in row_text.lower() for k in ['pedido','fecha','vendedor','no_ped','status','estatus','estado']):
+                if any(k in row_text.lower() for k in ['pedido','fecha','vendedor','no_ped']):
                     header_row_idx = i
-                    app.logger.info(f"✅ Encabezados PEDIDOS en fila {i}: {row_text}")
                     break
             if header_row_idx is None:
                 header_row_idx = 0
 
-            # relee con encabezados para intentar capturar Status si existe
-            try:
-                dfp = pd.read_excel(path_pedidos, header=header_row_idx, dtype=str)
-                cols_norm = [unidecode(str(c)).strip().lower() for c in dfp.columns]
-                def _find_named_col(names):
-                    for name in names:
-                        if name in cols_norm:
-                            return cols_norm.index(name)
-                    return None
-                c_fecha = _find_named_col(["fecha","fec_ped","fch_ped"])
-                c_ped   = _find_named_col(["pedido","no_ped","no ped","nopedido","numero de pedido"])
-                c_serie = _find_named_col(["serie"])
-                c_vend  = _find_named_col(["vendedor","agente","seller"])
-                c_stat  = _find_named_col(["status","estatus","estado"])
-
-                if c_ped is not None:
-                    for _, row in dfp.iterrows():
-                        fecha     = _vv_date_only(row.iloc[c_fecha]) if c_fecha is not None else ""
-                        pedido    = _vv_norm_pedido_num_floatsafe(row.iloc[c_ped])
-                        serie_raw = _vv_text(row.iloc[c_serie]) if c_serie is not None else ""
-                        vendedor  = _vv_text(row.iloc[c_vend]) if c_vend is not None else ""
-                        status_xl = _vv_clean_val(row.iloc[c_stat]) if c_stat is not None else ""
-                        if pedido:
-                            pedidos_list.append({
-                                'fecha': fecha,
-                                'pedido': pedido,
-                                'serie': (re.sub(r"[^A-Z]+", "", unidecode(serie_raw).upper()) or "ISI"),
-                                'vendedor': vendedor,
-                                'status_excel': status_xl,
-                                'remisiones': [],
-                                'facturas_anticipo': [],
-                                'facturas_remision': []
-                            })
-                    return len(pedidos_list) > 0
-            except Exception:
-                pass
-
-            # fallback por posiciones si no se pudo lo de arriba
+            # Fallback por posiciones (igual que combinado)
             start_data_row = header_row_idx + 1
             for idx in range(start_data_row, len(df_pedidos)):
-                fecha     = _vv_date_only(df_pedidos.iloc[idx, 0] if df_pedidos.shape[1] > 0  else "")
+                fecha     = _vv_text(df_pedidos.iloc[idx, 0] if df_pedidos.shape[1] > 0  else "")
                 pedido    = _vv_norm_pedido_num_floatsafe(df_pedidos.iloc[idx, 1] if df_pedidos.shape[1] > 1  else "")
                 serie_raw = _vv_text(df_pedidos.iloc[idx, 2] if df_pedidos.shape[1] > 2  else "")
                 vendedor  = _vv_text(df_pedidos.iloc[idx, 26] if df_pedidos.shape[1] > 26 else "")
-                serie = re.sub(r"[^A-Z]+", "", unidecode(serie_raw).upper()) or "ISI"
                 if pedido:
                     pedidos_list.append({
                         'fecha': fecha,
                         'pedido': pedido,
-                        'serie': serie,
+                        'serie': (re.sub(r"[^A-Z]+", "", unidecode(serie_raw).upper()) or "ISI"),
                         'vendedor': vendedor,
-                        'status_excel': "",  # sin header, no sabemos status
+                        'status_excel': "",
                         'remisiones': [],
                         'facturas_anticipo': [],
                         'facturas_remision': []
@@ -1217,7 +1286,6 @@ def _vv_load_rows_from_excel() -> list:
                     'facturas_anticipo': [],
                     'facturas_remision': []
                 })
-            app.logger.info(f"🧱 Maestro provisional con {len(pedidos_list)} pedidos")
             return len(pedidos_list) > 0
 
         have_master = _build_master_from_pedidos(sheets_data["pedidos"])
@@ -1227,10 +1295,9 @@ def _vv_load_rows_from_excel() -> list:
                 _VV_CACHE["rows"] = persisted_rows
                 return persisted_rows
 
-        # Cruces
+        # Cruces (OP2 / FACT_ANT / FACT2)
         idx_by_pedido = {p['pedido']: p for p in pedidos_list}
 
-        # OP2 → Remisiones
         if not sheets_data['op2'].empty:
             df_op2 = sheets_data['op2']
             rem_col = _vv_find_col_by_name(df_op2, ["no_rem","no rem","remision","remisiones"]) or 0
@@ -1251,34 +1318,22 @@ def _vv_load_rows_from_excel() -> list:
                         if rfolio not in tgt['remisiones']:
                             tgt['remisiones'].append(rfolio)
 
-        # FACT_ANT → Anticipo
+        fa_pairs = []
         if not sheets_data['fact_ant'].empty:
             try:
                 fa_pairs = _fa_pairs_from_df(sheets_data['fact_ant'])
             except Exception:
                 fa_pairs = []
-            if not fa_pairs and sheets_data['fact_ant'].shape[1] > 48:
-                df_fa = sheets_data['fact_ant']
-                for i in range(df_fa.shape[0]):
-                    fac = _vv_folio_text(df_fa.iloc[i, 0])
-                    pid = _vv_norm_pedido_num_floatsafe(df_fa.iloc[i, 48])
-                    if fac and pid:
-                        fa_pairs.append((fac, pid))
+        if (not fa_pairs) and combined_path and os.path.exists(combined_path):
+            eng = _open_engine(combined_path)
+            if eng:
+                fa_pairs = _scan_fact_ant_pairs_from_workbook(combined_path, eng)
+        if fa_pairs:
             for fac, pid in fa_pairs:
                 tgt = idx_by_pedido.get(pid)
                 if tgt and fac not in tgt['facturas_anticipo']:
                     tgt['facturas_anticipo'].append(fac)
-        elif combined_path and os.path.exists(combined_path):
-            eng = _open_engine(combined_path)
-            if eng:
-                fa_pairs = _scan_fact_ant_pairs_from_workbook(combined_path, eng)
-                if fa_pairs:
-                    for fac, pid in fa_pairs:
-                        tgt = idx_by_pedido.get(pid)
-                        if tgt and fac not in tgt['facturas_anticipo']:
-                            tgt['facturas_anticipo'].append(fac)
 
-        # FACT2 → Factura de remisión
         if not sheets_data['fact2'].empty and sheets_data['fact2'].shape[1] > 48:
             df_f2 = sheets_data['fact2']
             for i in range(df_f2.shape[0]):
@@ -1290,7 +1345,6 @@ def _vv_load_rows_from_excel() -> list:
                 if tgt and fac not in tgt['facturas_remision']:
                     tgt['facturas_remision'].append(fac)
 
-        # Consolidado final + merge persistente
         consolidated_rows = []
         for p in pedidos_list:
             rem_join = _vv_join_unique_sorted(p['remisiones'])
@@ -1311,7 +1365,6 @@ def _vv_load_rows_from_excel() -> list:
         consolidated_rows = sorted(consolidated_rows, key=lambda r: r['pedido'])
         merged_rows = _vv_merge_consolidated(persisted_rows, consolidated_rows)
 
-        app.logger.info(f"🎉 CONSOLIDADO (multi-fuente + merge): {len(merged_rows)}")
         _VV_CACHE["mtime"] = cache_mtime
         _VV_CACHE["rows"] = merged_rows
         _vv_store_save(merged_rows)
@@ -1320,10 +1373,10 @@ def _vv_load_rows_from_excel() -> list:
     except Exception as e:
         app.logger.error(f"💥 ERROR en procesamiento: {str(e)}")
         app.logger.error(traceback.format_exc())
-        # ante error, regresamos lo persistido para no perder datos
         rows = _vv_store_load()
         _VV_CACHE["rows"] = rows
         return rows
+
 
 @app.get("/vv/sheets-info")
 @login_required

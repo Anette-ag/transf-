@@ -91,6 +91,12 @@
         <button id="fSinFacRem" class="toggle" title="Sólo sin factura de remisión">Sin fac. remisión</button>
         <button id="exportBtn">Exportar CSV</button>
         <button id="clearBtn" class="ghost">Limpiar caché</button>
+
+        <!-- NUEVO: eliminar todo -->
+        <label class="count" style="display:flex;align-items:center;gap:6px;margin-left:8px;">
+          <input type="checkbox" id="purgeUploads"> También borrar archivos subidos
+        </label>
+        <button id="deleteAllBtn" class="ghost" style="border-color:var(--danger);color:var(--danger);" title="Eliminar caché + store.json (y opcionalmente uploads)">🗑️ Eliminar TODO</button>
       </div>
     </div>
 
@@ -158,6 +164,30 @@
         alert('Caché limpiada.');
       }else{
         alert('No se pudo limpiar la caché (¿sesión vencida?).');
+      }
+    });
+
+    // ===== NUEVO: Eliminar TODOS los datos (caché + store.json + opcional uploads)
+    const deleteBtn = document.getElementById('deleteAllBtn');
+    const purgeChk  = document.getElementById('purgeUploads');
+    deleteBtn.addEventListener('click', async ()=>{
+      const extra = purgeChk.checked ? "\n\nTambién se eliminarán archivos subidos." : "";
+      if(!confirm('¿Seguro que quieres borrar TODOS los datos? Esta acción no se puede deshacer.' + extra)) return;
+
+      const form = new FormData();
+      if (purgeChk.checked) form.append('purge_uploads', 'on');
+
+      try{
+        const res = await fetch('/vv/delete-all.json', { method:'POST', body: form });
+        const j = await res.json().catch(()=>({}));
+        if(res.ok && (j.ok===true || j.ok===undefined)){
+          await loadData();
+          alert(`Datos eliminados.\n${purgeChk.checked ? `Se eliminaron ${j.uploads_removed ?? 0} archivos de uploads.` : ''}`);
+        }else{
+          alert(j.error || j.message || 'No se pudo eliminar. Revisa el log del servidor.');
+        }
+      }catch(e){
+        alert('Error de red eliminando datos.');
       }
     });
 
@@ -285,7 +315,8 @@
 
     // ===== Per page
     const per = document.getElementById('perPage');
-    PERPAGE = +per.value;
+    let PERPAGE_select = +per.value;
+    PERPAGE = PERPAGE_select;
     per.addEventListener('change', ()=>{
       PERPAGE = +per.value;
       PAGE = 1;
