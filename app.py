@@ -1768,10 +1768,10 @@ app.config.update(
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
     SQLALCHEMY_ENGINE_OPTIONS={
     'pool_pre_ping': True,
-    'pool_recycle': 1800,
+    'pool_recycle': 300,
     'pool_size': 3,      # antes 10
     'max_overflow': 2,   # antes 5
-    'pool_timeout': 30,
+    'pool_timeout': 20,
 },
     UPLOAD_FOLDER=UPLOAD_FOLDER,
     MAX_CONTENT_LENGTH = 64 * 1024 * 1024,
