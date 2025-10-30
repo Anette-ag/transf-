@@ -1793,23 +1793,35 @@ print("================================================")
 # -----------------------------
 db = SQLAlchemy(app)
 
+# 4) Cerrar sesiones SIEMPRE al final del request/app context
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    try:
+        db.session.remove()
+    except Exception:
+        # Evita que un error aquí rompa el shutdown
+        pass
+
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 # --- Healthcheck DB ---
-from sqlalchemy import text
+from sqlalchemy import text  
+import time
 
 def db_ready() -> bool:
-    """Verifica si la base de datos está lista para recibir conexiones."""
+    """Verifica si la base de datos está lista SIN martillar a PgBouncer."""
     try:
         with db.engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
+            # Opción 1 (SQLAlchemy 2.x “crudo”)
+            conn.exec_driver_sql("SELECT 1")
+            # Opción 2 equivalente:
+            # conn.execute(text("SELECT 1"))
         return True
     except Exception:
         app.logger.exception("DB no lista / error de conexión")
+        time.sleep(0.5)  # pequeño respiro para no agotar el pool en congestión
         return False
-
-
 
 # Modelos de base de datos
 class User(UserMixin, db.Model):
