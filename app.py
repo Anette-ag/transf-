@@ -51,55 +51,6 @@ os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
 import socket
 from urllib.parse import urlencode, parse_qsl
 
-# --- Base de datos (Render) ---
-from flask_sqlalchemy import SQLAlchemy
-
-# --- Base de datos (Render) ---
-raw_db_url = os.getenv("DATABASE_URL", "")
-if not raw_db_url:
-    raise RuntimeError("DATABASE_URL no está definida")
-
-# Normaliza siempre a psycopg v3
-# Casos: postgres://, postgresql://, postgresql+psycopg2://
-if raw_db_url.startswith("postgres://"):
-    raw_db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
-
-# si viene con driver viejo, cámbialo
-if raw_db_url.startswith("postgresql+psycopg2://"):
-    raw_db_url = raw_db_url.replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
-
-# si viene sin driver explícito, añádelo
-elif raw_db_url.startswith("postgresql://"):
-    raw_db_url = raw_db_url.replace("postgresql://", "postgresql+psycopg://", 1)
-
-# fuerza SSL
-if "sslmode=" not in raw_db_url:
-    raw_db_url += ("&" if "?" in raw_db_url else "?") + "sslmode=require"
-
-app.config["SQLALCHEMY_DATABASE_URI"] = raw_db_url
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True, "pool_recycle": 300}
-
-db = SQLAlchemy(app)
-
-# Log para verificar el driver real
-try:
-    from sqlalchemy.engine.url import make_url
-    print(">> DB driver:", make_url(app.config["SQLALCHEMY_DATABASE_URI"]).drivername, flush=True)
-except Exception:
-    pass
-
-
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-# Opcional: más resiliencia en Render
-app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-    "pool_pre_ping": True,
-    "pool_recycle": 300,
-}
-
-db = SQLAlchemy(app)
-
-
 # ===== Helpers vv: leer TODAS las hojas del Excel y normalizar columnas =====
 # Caché en memoria (asegurado)
 try:
@@ -503,17 +454,6 @@ def vv_inspect_file():
         
     except Exception as e:
         return jsonify({"error": f"No se pudo leer: {str(e)}"})
-
-@app.get("/db/ping")
-def db_ping():
-    try:
-        with db.engine.begin() as conn:
-            conn.execute(text("select 1"))
-        return {"ok": True}
-    except Exception as e:
-        app.logger.error(f"DB ping error: {e}")
-        return {"ok": False, "error": str(e)}, 500
-
 
 @app.get("/vv/debug-file")
 @login_required
