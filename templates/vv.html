@@ -54,6 +54,9 @@
     .pill{border:1px solid var(--border);border-radius:999px;padding:4px 10px}
     .toggle{border:1px solid var(--border);background:transparent;border-radius:999px;padding:6px 10px}
     .count{color:var(--muted);font-size:13px}
+
+    /* NUEVO: cada folio en su propia línea dentro de la celda */
+    .cell-item{display:block; line-height:1.2; padding:2px 0;}
   </style>
 </head>
 <body>
@@ -368,6 +371,16 @@
       render();
     }
 
+    // NUEVO: helper para renderizar listas verticales dentro de la celda
+    function renderCellList(csv){
+      if(!csv) return "";
+      return String(csv).split(",")
+        .map(s => s.trim())
+        .filter(Boolean)
+        .map(s => `<div class="cell-item">${s}</div>`)
+        .join("");
+    }
+
     function render(){
       // ordenar
       VIEW.sort((a,b)=>{
@@ -422,9 +435,9 @@
         tr.innerHTML = `
           <td>${fecha||""}</td>
           <td><span class="chip">${pedido||""}</span></td>
-          <td>${rem||""}</td>
-          <td>${fant||""}</td>
-          <td>${frem||""}</td>
+          <td>${renderCellList(rem)}</td>
+          <td>${renderCellList(fant)}</td>
+          <td>${renderCellList(frem)}</td>
           <td><span class="chip status ${sClass}">${sText}</span></td>
           <td>${vend||""}</td>
         `;
