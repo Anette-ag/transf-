@@ -23,6 +23,8 @@ from io import BytesIO
 import unicodedata, time, json
 import traceback
 import io
+from sqlalchemy import text
+import time
 
 
 # Inicialización de la aplicación
@@ -48,6 +50,28 @@ os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
 
 import socket
 from urllib.parse import urlencode, parse_qsl
+
+# --- Base de datos (Render) ---
+from flask_sqlalchemy import SQLAlchemy
+
+raw_db_url = os.getenv("DATABASE_URL", "")
+# Compatibilidad: si viniera como postgres:// lo convertimos (tu captura ya es postgresql://)
+if raw_db_url.startswith("postgres://"):
+    raw_db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
+# Asegura SSL si no viene en la URL (tu captura ya trae ?sslmode=require)
+if raw_db_url and "sslmode=" not in raw_db_url:
+    raw_db_url += ("&" if "?" in raw_db_url else "?") + "sslmode=require"
+
+app.config["SQLALCHEMY_DATABASE_URI"] = raw_db_url
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+# Opcional: más resiliencia en Render
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+}
+
+db = SQLAlchemy(app)
+
 
 # ===== Helpers vv: leer TODAS las hojas del Excel y normalizar columnas =====
 # Caché en memoria (asegurado)
@@ -357,9 +381,9 @@ ALLOWED_EXTENSIONS = {"xlsx", "xls"}
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
+@csrf.exempt
 @app.post("/vv/upload")
 @login_required
-@csrf.exempt
 def vv_upload():
     if not session.get("vv_ok"):
         return jsonify({"error": "No autorizado"}), 401
@@ -386,25 +410,35 @@ def vv_upload():
 
         # Procesar inmediatamente y obtener resultados
         test_rows = _vv_load_rows_from_excel()
-        
+
         if len(test_rows) == 0:
             return jsonify({
-                "ok": False, 
+                "ok": False,
                 "filename": fname,
                 "message": "El archivo se subió pero no se encontraron datos válidos. Revisa los logs.",
-                "rows_processed": 0
+                "rows_processed": 0,
+                "rows_saved": 0
             })
-        
+
+        rows_saved = 0
+        try:
+            rows_saved = _vv_upsert_consolidado(test_rows)
+            app.logger.info(f"[vv] UPSERT {rows_saved} filas en remisiones_consolidadas")
+        except Exception as e:
+            app.logger.error(f"[vv] Error guardando consolidado en DB: {e}")
+
         return jsonify({
-            "ok": True, 
+            "ok": True,
             "filename": fname,
-            "message": f"✅ Archivo procesado correctamente. Se encontraron {len(test_rows)} filas.",
-            "rows_processed": len(test_rows)
+            "message": f"✅ Archivo procesado correctamente. {len(test_rows)} filas (guardadas: {rows_saved}).",
+            "rows_processed": len(test_rows),
+            "rows_saved": rows_saved
         })
 
     except Exception as e:
         app.logger.error(f"Error en upload: {str(e)}")
         return jsonify({"error": f"Error: {str(e)}"}), 500
+
 
 @app.get("/vv/inspect-file")
 @login_required
@@ -442,6 +476,17 @@ def vv_inspect_file():
         
     except Exception as e:
         return jsonify({"error": f"No se pudo leer: {str(e)}"})
+
+@app.get("/db/ping")
+def db_ping():
+    try:
+        with db.engine.begin() as conn:
+            conn.execute(text("select 1"))
+        return {"ok": True}
+    except Exception as e:
+        app.logger.error(f"DB ping error: {e}")
+        return {"ok": False, "error": str(e)}, 500
+
 
 @app.get("/vv/debug-file")
 @login_required
@@ -1643,49 +1688,128 @@ def vv_data():
         return jsonify({"error": "No autorizado"}), 401
 
     try:
-        # 1) Archivo fuente (para mostrar en la UI)
-        path = _vv_pick_excel()
-        if not path:
-            return jsonify({"data": [], "source": None, "message": "No hay archivo Excel disponible"})
+        # 1) Intentar leer primero de la BD
+        sql = text("""
+            select
+                pedido_label      as pedido,
+                fecha,
+                remisiones,
+                factura_anticipo,
+                factura_remision,
+                status,
+                vendedor
+            from public.remisiones_consolidadas
+            order by pedido_label asc
+        """)
+        with db.engine.begin() as conn:
+            rows_db = [dict(r) for r in conn.execute(sql).mappings().all()]
 
-        # 2) Cargar consolidado en snake_case
-        rows_snake = _vv_load_rows_from_excel()  # [{'fecha','pedido','remisiones','factura_anticipo','factura_remision','status','vendedor'}, ...]
+        source_name = "DB (remisiones_consolidadas)"
 
-        # 3) Aplicar filtros por faltantes (si vienen en querystring)
-        #    Soporta: ?missing_anticipo=1&missing_remision=1&missing_facrem=1
-        rows_snake = _vv_apply_missing_filters_snake(rows_snake, request.args)
+        # 2) Si la BD no tiene datos, caemos a Excel y (si hay) persistimos
+        if not rows_db:
+            rows_snake = _vv_load_rows_from_excel()  # [{'fecha','pedido',...}]
+            if rows_snake:
+                try:
+                    _vv_upsert_consolidado(rows_snake)
+                except Exception as e:
+                    app.logger.error(f"[vv] Error persistiendo fallback Excel->DB: {e}")
+                rows_db = rows_snake
+                source_name = "Excel (fallback)"
+            else:
+                rows_db = []
 
-        # 4) Mapear a las 7 columnas que consume el frontend
+        # 3) Normalizar llaves esperadas por el front (defensas por si acaso)
+        for r in rows_db:
+            r.setdefault("fecha", "")
+            r.setdefault("pedido", "")
+            r.setdefault("remisiones", "")
+            r.setdefault("factura_anticipo", "")
+            r.setdefault("factura_remision", "")
+            r.setdefault("status", "")
+            r.setdefault("vendedor", "")
+
+        # 4) Aplicar filtros de faltantes (?missing_anticipo=1&missing_remision=1&missing_facrem=1)
+        rows_filtered = _vv_apply_missing_filters_snake(rows_db, request.args)
+
+        # 5) Mapear al formato de 7 columnas del frontend
         out = []
-        for r in rows_snake:
+        for r in rows_filtered:
             out.append({
                 "FECHA": r.get("fecha", ""),
                 "PEDIDO": r.get("pedido", ""),
                 "REMISIONES": r.get("remisiones", ""),
                 "FACTURA DE ANTICIPO": r.get("factura_anticipo", ""),
-                "FACTURA DE REMISIÓN": r.get("factura_remision", ""),  # con acento
+                "FACTURA DE REMISIÓN": r.get("factura_remision", ""),
                 "STATUS": r.get("status", ""),
                 "VENDEDOR": r.get("vendedor", ""),
             })
 
-        name = os.path.basename(path) if path else None
         return jsonify({
             "ok": True,
             "data": out,
-            "source": name,
+            "source": source_name,
             "count": len(out)
         })
 
     except Exception as e:
-        app.logger.error(f"[vv] Error cargando excel: {str(e)}")
+        app.logger.error(f"[vv] Error en /vv/data: {e}")
         app.logger.error(traceback.format_exc())
         return jsonify({
             "ok": False,
             "data": [],
-            "error": f"Error leyendo Excel: {str(e)}",
+            "error": str(e),
             "source": None
         }), 500
 
+def _vv_upsert_consolidado(rows: list[dict]) -> int:
+    """
+    Guarda/actualiza en public.remisiones_consolidadas con UPSERT por (pedido_num).
+    Devuelve el número de filas afectadas.
+    """
+    if not rows:
+        return 0
+
+    # Convertimos 'ISI-12345' -> pedido_num='12345' y pedido_label='ISI-12345'
+    payload = []
+    for r in rows:
+        label = (r.get("pedido") or "").strip()
+        # extrae solo dígitos del label
+        only_digits = "".join(ch for ch in label if ch.isdigit())
+        if not only_digits:
+            # si no hay dígitos, usamos el label completo como “num” para no perder la fila
+            only_digits = label
+        payload.append({
+            "pedido_num": only_digits,
+            "pedido_label": label,
+            "fecha": (r.get("fecha") or "")[:10],
+            "remisiones": r.get("remisiones") or "",
+            "factura_anticipo": r.get("factura_anticipo") or "",
+            "factura_remision": r.get("factura_remision") or "",
+            "status": r.get("status") or "",
+            "vendedor": r.get("vendedor") or "",
+        })
+
+    sql = text("""
+        insert into public.remisiones_consolidadas
+            (pedido_num, pedido_label, fecha, remisiones, factura_anticipo, factura_remision, status, vendedor)
+        values
+            (:pedido_num, :pedido_label, :fecha, :remisiones, :factura_anticipo, :factura_remision, :status, :vendedor)
+        on conflict (pedido_num) do update set
+            pedido_label      = excluded.pedido_label,
+            fecha             = excluded.fecha,
+            remisiones        = excluded.remisiones,
+            factura_anticipo  = excluded.factura_anticipo,
+            factura_remision  = excluded.factura_remision,
+            status            = excluded.status,
+            vendedor          = excluded.vendedor,
+            updated_at        = now()
+    """)
+
+    with app.app_context():
+        with db.engine.begin() as conn:
+            conn.execute(sql, payload)
+            return len(payload)
 
 
 def _mask_url_safe(u: str) -> str:
@@ -1805,9 +1929,7 @@ def shutdown_session(exception=None):
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-# --- Healthcheck DB ---
-from sqlalchemy import text  
-import time
+# --- Healthcheck DB --- 
 
 def db_ready() -> bool:
     """Verifica si la base de datos está lista SIN martillar a PgBouncer."""
