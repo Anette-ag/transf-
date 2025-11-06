@@ -732,119 +732,232 @@ def _vv_load_rows_from_excel() -> list:
         def _vv_pick_excel():
             return _find_upload_by_tokens(("rem_pend",), ("combinado",), ("master",))
 
-    # ---------- Escáner de FACT_ANT (por encabezados o A/AW) ----------
-    def _scan_fact_ant_pairs_from_workbook(xls_path: str, engine: str) -> list[tuple[str, str]]:
-        pairs: list[tuple[str, str]] = []
-        try:
-            with pd.ExcelFile(xls_path, engine=engine) as xls:
-                pedido_keys = {"pedi_rem", "pedirem", "no_peda", "no_ped", "no ped", "pedido"}
+        # ---------- Escáner de FACT_ANT (por encabezados o A/AW) ----------
+        def _scan_fact_ant_pairs_from_workbook(xls_path: str, engine: str) -> list[tuple[str, str]]:
+            """
+            Busca pares (no_fac, pedido_num) en todas las hojas del workbook.
+            Prioriza hojas con nombres tipo 'fact_ant'/'anticipo', intenta detectar encabezados,
+            y cae a la heurística por posiciones (A=0 y AW=48) si no hay encabezados claros.
+            """
+            pairs: list[tuple[str, str]] = []
 
-                preferred = [s for s in xls.sheet_names if any(k in s.lower() for k in ["fact_ant", "fac_ant", "anticipo"])]
+            def _norm(s) -> str:
+                return unidecode(str(s)).strip().lower()
 
-                def _autodetect_header_row(df0: pd.DataFrame) -> int | None:
-                    for r in range(min(15, len(df0))):
-                        row_vals = [unidecode(str(x)).strip().lower() for x in df0.iloc[r].tolist()]
-                        if any(v == "no_fac" for v in row_vals) and any(v in pedido_keys for v in row_vals):
-                            return r
-                    return None
+            fac_candidates = {
+                "no_fac", "no fac", "nofac", "factura", "no_factura", "no factura",
+                "factura anticipo", "fac_anticipo", "fact_anticipo", "fact_ant", "fac ant"
+            }
+            ped_candidates = {
+                "pedi_rem", "pedirem", "no_peda", "no_ped", "no ped", "pedido",
+                "pedido rem", "pedido_rem", "no_ped_rem"
+            }
 
-                def _collect_from_sheet(sheet_name: str):
-                    nonlocal pairs
+            def _find_header_row(df0: pd.DataFrame, scan_rows: int = 25) -> tuple[int | None, dict]:
+                """Devuelve (row_index, {'fac':col_idx, 'ped':col_idx}) si detecta encabezados."""
+                n = min(scan_rows, len(df0))
+                for r in range(n):
+                    row_vals = [_norm(x) for x in df0.iloc[r].tolist()]
+                    # mapea nombre normalizado -> índice
+                    cols_map = {row_vals[c]: c for c in range(len(row_vals)) if row_vals[c]}
+                    # intenta localizar columnas fac/ped por nombre
+                    fac_idx = next((cols_map[k] for k in fac_candidates if k in cols_map), None)
+                    ped_idx = next((cols_map[k] for k in ped_candidates if k in cols_map), None)
+                    if fac_idx is not None and ped_idx is not None:
+                        return r, {"fac": fac_idx, "ped": ped_idx}
+                return None, {}
+
+            def _collect_from_sheet(sheet_name: str):
+                nonlocal pairs
+                try:
+                    df_raw = pd.read_excel(xls_path, sheet_name=sheet_name, header=None, dtype=str, engine=engine)
+                except Exception:
+                    return
+                if df_raw.empty:
+                    return
+
+                hdr_row, idxs = _find_header_row(df_raw)
+                if hdr_row is not None:
+                    # Relee con header
                     try:
-                        df_raw = pd.read_excel(xls_path, sheet_name=sheet_name, header=None, dtype=str, engine=engine)
+                        df = pd.read_excel(xls_path, sheet_name=sheet_name, header=hdr_row, dtype=str, engine=engine)
                     except Exception:
                         return
-                    if df_raw.empty:
-                        return
-                    hdr = _autodetect_header_row(df_raw)
-                    if hdr is not None:
-                        df = pd.read_excel(xls_path, sheet_name=sheet_name, header=hdr, dtype=str, engine=engine)
-                        cols = [unidecode(str(c)).strip().lower() for c in df.columns]
-                        if "no_fac" in cols and any(k in cols for k in pedido_keys):
-                            cfac = cols.index("no_fac")
-                            for key in ["pedi_rem", "pedirem", "no_peda", "no_ped", "no ped", "pedido"]:
-                                if key in cols:
-                                    cped = cols.index(key)
-                                    break
-                            for _, row in df.iterrows():
-                                fac = _vv_folio_text(row.iloc[cfac]) if cfac < len(row) else ""
-                                pid = _vv_norm_pedido_num_floatsafe(row.iloc[cped]) if cped < len(row) else ""
-                                if fac and pid and pid != "0":
-                                    pairs.append((fac, pid))
-                    else:
-                        if df_raw.shape[1] > 48:
-                            for i in range(df_raw.shape[0]):
-                                fac = _vv_folio_text(df_raw.iloc[i, 0])
-                                pid = _vv_norm_pedido_num_floatsafe(df_raw.iloc[i, 48])
-                                if fac and pid:
-                                    pairs.append((fac, pid))
+                    cols_norm = [_norm(c) for c in df.columns]
 
-                for s in preferred:
-                    _collect_from_sheet(s)
-                    if pairs:
-                        return pairs
+                    # Si por nombre no salió, intenta "mejor columna" por heurística
+                    def _best_idx(cols, candidates):
+                        for cand in candidates:
+                            if cand in cols:
+                                return cols.index(cand)
+                        return None
 
-                for s in xls.sheet_names:
-                    if s in preferred:
-                        continue
-                    try:
-                        df_raw = pd.read_excel(xls_path, sheet_name=s, header=None, dtype=str, engine=engine)
-                    except Exception:
-                        continue
-                    if df_raw.empty:
-                        continue
-                    hdr = _autodetect_header_row(df_raw)
-                    if hdr is None:
-                        continue
-                    try:
-                        df = pd.read_excel(xls_path, sheet_name=s, header=hdr, dtype=str, engine=engine)
-                    except Exception:
-                        continue
-                    cols = [unidecode(str(c)).strip().lower() for c in df.columns]
-                    if "no_fac" in cols and any(k in cols for k in pedido_keys):
-                        cfac = cols.index("no_fac")
-                        for key in ["pedi_rem", "pedirem", "no_peda", "no_ped", "no ped", "pedido"]:
-                            if key in cols:
-                                cped = cols.index(key)
-                                break
+                    cfac = _best_idx(cols_norm, fac_candidates)
+                    cped = _best_idx(cols_norm, ped_candidates)
+
+                    # Si aún no hay, intenta detectar por contenido:
+                    if cped is None:
+                        # escoge la columna con más valores que parecen pedidos numéricos
+                        best, best_cnt = None, -1
+                        for j in range(len(cols_norm)):
+                            cnt = 0
+                            col = df.iloc[:, j]
+                            for v in col.head(200):
+                                if _vv_norm_pedido_num_floatsafe(v):
+                                    cnt += 1
+                            if cnt > best_cnt:
+                                best, best_cnt = j, cnt
+                        cped = best
+
+                    if cfac is None:
+                        # escoge la columna con más valores tipo folio (texto no-fecha)
+                        best, best_cnt = None, -1
+                        for j in range(len(cols_norm)):
+                            cnt = 0
+                            col = df.iloc[:, j]
+                            for v in col.head(200):
+                                t = _vv_folio_text(v)
+                                if t and not t.isdigit():  # folio “parece” alfanumérico
+                                    cnt += 1
+                            if cnt > best_cnt:
+                                best, best_cnt = j, cnt
+                        cfac = best
+
+                    if cfac is not None and cped is not None:
                         for _, row in df.iterrows():
                             fac = _vv_folio_text(row.iloc[cfac]) if cfac < len(row) else ""
                             pid = _vv_norm_pedido_num_floatsafe(row.iloc[cped]) if cped < len(row) else ""
                             if fac and pid and pid != "0":
                                 pairs.append((fac, pid))
-        except Exception:
-            return pairs
-        return pairs
+                        return
 
-    # ---------- Lector robusto de fact_ant (con/sin encabezados) ----------
-    def _fa_pairs_from_df(df: pd.DataFrame) -> list[tuple[str, str]]:
-        pairs: list[tuple[str, str]] = []
-        try:
-            dfh = df.copy()
-            dfh.columns = [unidecode(str(c)).strip().lower() for c in dfh.columns]
-            cols = list(dfh.columns)
-            if "no_fac" in cols and any(k in cols for k in ["pedi_rem","pedirem","no_peda","no_ped","no ped","pedido"]):
-                cfac = cols.index("no_fac")
-                for key in ["pedi_rem","pedirem","no_peda","no_ped","no ped","pedido"]:
-                    if key in cols:
-                        cped = cols.index(key)
-                        break
-                for _, row in dfh.iterrows():
-                    fac = _vv_folio_text(row.iloc[cfac]) if cfac < len(row) else ""
-                    pid = _vv_norm_pedido_num_floatsafe(row.iloc[cped]) if cped < len(row) else ""
+                # Fallback por posiciones (A / AW)
+                if df_raw.shape[1] > 48:
+                    for i in range(df_raw.shape[0]):
+                        fac = _vv_folio_text(df_raw.iloc[i, 0])
+                        pid = _vv_norm_pedido_num_floatsafe(df_raw.iloc[i, 48])
+                        if fac and pid and pid != "0":
+                            pairs.append((fac, pid))
+
+            try:
+                with pd.ExcelFile(xls_path, engine=engine) as xls:
+                    # prioriza hojas con nombre de anticipo
+                    preferred = [s for s in xls.sheet_names if any(k in s.lower() for k in ["fact_ant", "fac_ant", "anticipo"])]
+                    for s in preferred:
+                        _collect_from_sheet(s)
+                    # si aún no hay, recorre el resto
+                    if not pairs:
+                        for s in xls.sheet_names:
+                            if s in preferred:
+                                continue
+                            _collect_from_sheet(s)
+            except Exception:
+                pass
+
+            # Deduplicar preservando orden
+            seen = set()
+            out = []
+            for fac, pid in pairs:
+                key = (fac, pid)
+                if key not in seen:
+                    seen.add(key)
+                    out.append((fac, pid))
+            return out
+
+
+        # ---------- Lector robusto de fact_ant (con/sin encabezados) ----------
+        def _fa_pairs_from_df(df: pd.DataFrame) -> list[tuple[str, str]]:
+            """
+            Extrae pares (no_fac, pedido_num) de un DataFrame suelto.
+            Acepta encabezados diversos; si no hay, cae a posiciones 0 y 48.
+            """
+            pairs: list[tuple[str, str]] = []
+            if df is None or df.empty:
+                return pairs
+
+            def _norm(s) -> str:
+                return unidecode(str(s)).strip().lower()
+
+            # 1) Intento con encabezados
+            try:
+                dfh = df.copy()
+                dfh.columns = [_norm(c) for c in dfh.columns]
+                cols = list(dfh.columns)
+
+                fac_candidates = [
+                    "no_fac", "no fac", "nofac", "factura", "no_factura", "no factura",
+                    "factura anticipo", "fac_anticipo", "fact_anticipo", "fact_ant", "fac ant"
+                ]
+                ped_candidates = ["pedi_rem", "pedirem", "no_peda", "no_ped", "no ped", "pedido",
+                                "pedido rem", "pedido_rem", "no_ped_rem"]
+
+                def _best_idx(cols, cands):
+                    for c in cands:
+                        if c in cols:
+                            return cols.index(c)
+                    return None
+
+                cfac = _best_idx(cols, fac_candidates)
+                cped = _best_idx(cols, ped_candidates)
+
+                # Heurísticas si no se encontraron por nombre
+                if cped is None:
+                    best, best_cnt = None, -1
+                    for j in range(len(cols)):
+                        cnt = 0
+                        col = dfh.iloc[:, j]
+                        for v in col.head(200):
+                            if _vv_norm_pedido_num_floatsafe(v):
+                                cnt += 1
+                        if cnt > best_cnt:
+                            best, best_cnt = j, cnt
+                    cped = best
+
+                if cfac is None:
+                    best, best_cnt = None, -1
+                    for j in range(len(cols)):
+                        cnt = 0
+                        col = dfh.iloc[:, j]
+                        for v in col.head(200):
+                            t = _vv_folio_text(v)
+                            if t and not t.isdigit():
+                                cnt += 1
+                        if cnt > best_cnt:
+                            best, best_cnt = j, cnt
+                    cfac = best
+
+                if cfac is not None and cped is not None:
+                    for _, row in dfh.iterrows():
+                        fac = _vv_folio_text(row.iloc[cfac]) if cfac < len(row) else ""
+                        pid = _vv_norm_pedido_num_floatsafe(row.iloc[cped]) if cped < len(row) else ""
+                        if fac and pid and pid != "0":
+                            pairs.append((fac, pid))
+                    # dedup manteniendo orden
+                    seen, out = set(), []
+                    for p in pairs:
+                        if p not in seen:
+                            seen.add(p)
+                            out.append(p)
+                    return out
+            except Exception:
+                pass
+
+            # 2) Fallback A / AW cuando no hay encabezados
+            if df.shape[1] > 48:
+                for i in range(df.shape[0]):
+                    fac = _vv_folio_text(df.iloc[i, 0])
+                    pid = _vv_norm_pedido_num_floatsafe(df.iloc[i, 48])
                     if fac and pid and pid != "0":
                         pairs.append((fac, pid))
-                return pairs
-        except Exception:
-            pass
 
-        if df.shape[1] > 48:
-            for i in range(df.shape[0]):
-                fac = _vv_folio_text(df.iloc[i, 0])
-                pid = _vv_norm_pedido_num_floatsafe(df.iloc[i, 48])
-                if fac and pid:
-                    pairs.append((fac, pid))
-        return pairs
+            # dedup
+            seen, out = set(), []
+            for p in pairs:
+                if p not in seen:
+                    seen.add(p)
+                    out.append(p)
+            return out
+
 
     # ---------- Merge incremental + persistencia ----------
     def _vv_merge_consolidated(old_rows: list, new_rows: list) -> list:
