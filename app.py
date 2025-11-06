@@ -732,14 +732,18 @@ def _vv_load_rows_from_excel() -> list:
         def _vv_pick_excel():
             return _find_upload_by_tokens(("rem_pend",), ("combinado",), ("master",))
 
-        # ---------- Escáner de FACT_ANT (robusto en libro con muchas hojas) ----------
+        # ---------- FACT_ANT: lector robusto en workbook (ajuste ÚNICO) ----------
         def _scan_fact_ant_pairs_from_workbook(xls_path: str, engine: str) -> list[tuple[str, str]]:
+            """
+            Escanea el libro buscando hoja(s) de anticipo. Detecta encabezados,
+            tolera nombres duplicados (no_fac.1), y si no hay headers usa A y AW (48).
+            Devuelve list[(no_fac, pedido_num)].
+            """
             pairs: list[tuple[str, str]] = []
 
             def _norm(s) -> str:
                 return unidecode(str(s)).strip().lower()
 
-            # Acepta muchas variantes de encabezado
             FAC_CANDS = {
                 "no_fac","no fac","nofac","no_factura","no factura",
                 "factura","factura anticipo","fac_anticipo","fact_anticipo","fact_ant","fac ant"
@@ -750,7 +754,6 @@ def _vv_load_rows_from_excel() -> list:
             }
 
             def _autodetect_header_row(df0: pd.DataFrame, scan=25) -> tuple[int|None, dict]:
-                """devuelve (fila_header, {'fac':idx,'ped':idx}) si encuentra encabezados por nombre"""
                 n = min(scan, len(df0))
                 for r in range(n):
                     row = [_norm(x) for x in df0.iloc[r].tolist()]
@@ -762,7 +765,7 @@ def _vv_load_rows_from_excel() -> list:
                 return None, {}
 
             def _pick_by_heuristic(df: pd.DataFrame) -> tuple[int|None, int|None]:
-                """si no hay nombres, elige columnas por contenido"""
+                # Si no hay nombres, elegir por contenido
                 cfac = cped = None
                 # cped: columna con más valores que parecen pedido numérico
                 best, best_cnt = None, -1
@@ -774,8 +777,7 @@ def _vv_load_rows_from_excel() -> list:
                     if cnt > best_cnt:
                         best, best_cnt = j, cnt
                 cped = best
-
-                # cfac: columna con más alfanuméricos que NO son fecha/solo dígitos
+                # cfac: columna con más alfanuméricos que no son fecha ni solo dígitos
                 best, best_cnt = None, -1
                 for j in range(df.shape[1]):
                     cnt = 0
@@ -799,19 +801,18 @@ def _vv_load_rows_from_excel() -> list:
 
                 hdr_row, idxs = _autodetect_header_row(df_raw)
                 if hdr_row is not None:
-                    # relee con header
                     try:
                         df = pd.read_excel(xls_path, sheet_name=sheet_name, header=hdr_row, dtype=str, engine=engine)
                     except Exception:
                         return
                     cols = [_norm(c) for c in df.columns]
 
-                    # manejar nombres duplicados tipo 'no_fac.1'
                     def _best_idx(cands):
+                        # exacto
                         for c in cands:
                             if c in cols:
                                 return cols.index(c)
-                        # si no está exacto, busca empieza-con (p.ej., no_fac.1)
+                        # empieza-con (para 'no_fac.1')
                         for i, name in enumerate(cols):
                             if any(name.startswith(c) for c in cands):
                                 return i
@@ -821,7 +822,6 @@ def _vv_load_rows_from_excel() -> list:
                     cped = _best_idx(PED_CANDS)
 
                     if cfac is None or cped is None:
-                        # heurística por contenido
                         cfac2, cped2 = _pick_by_heuristic(df)
                         cfac = cfac if cfac is not None else cfac2
                         cped = cped if cped is not None else cped2
@@ -834,10 +834,9 @@ def _vv_load_rows_from_excel() -> list:
                                 pairs.append((fac, pid))
                         return
 
-                # Fallback: si no hay encabezado, usa A y la última columna “ancha”
+                # Fallback: sin encabezado → A y AW(48) si existe, si no la última
                 if df_raw.shape[1] >= 2:
                     last_idx = df_raw.shape[1] - 1
-                    # si hay >=49 columnas, intenta AW=48; si no, usa la última
                     ped_idx = 48 if df_raw.shape[1] > 48 else last_idx
                     for i in range(df_raw.shape[0]):
                         fac = _vv_folio_text(df_raw.iloc[i, 0])
@@ -866,9 +865,12 @@ def _vv_load_rows_from_excel() -> list:
                     out.append((fac, pid))
             return out
 
-
-        # ---------- Lector robusto de fact_ant (archivo suelto con/sin encabezados) ----------
+        # ---------- FACT_ANT: lector robusto de DataFrame suelto (ajuste ÚNICO) ----------
         def _fa_pairs_from_df(df: pd.DataFrame) -> list[tuple[str, str]]:
+            """
+            Si tiene encabezados (no_fac + pedido/*), usa nombres (tolerando duplicados).
+            Si no, intenta A (0) y AW (48).
+            """
             pairs: list[tuple[str, str]] = []
             if df is None or df.empty:
                 return pairs
@@ -890,11 +892,9 @@ def _vv_load_rows_from_excel() -> list:
                 ]
 
                 def _best_idx(cols, cands):
-                    # exacto
                     for c in cands:
                         if c in cols:
                             return cols.index(c)
-                    # empieza-con (para 'no_fac.1')
                     for i, name in enumerate(cols):
                         if any(name.startswith(c) for c in cands):
                             return i
@@ -941,7 +941,7 @@ def _vv_load_rows_from_excel() -> list:
             except Exception:
                 pass
 
-            # Fallback sin encabezados: A y última/AW
+            # Fallback sin encabezados: A y AW / última
             if df.shape[1] >= 2:
                 last_idx = df.shape[1] - 1
                 ped_idx = 48 if df.shape[1] > 48 else last_idx
@@ -1120,7 +1120,7 @@ def _vv_load_rows_from_excel() -> list:
                                             if rfolio not in tgt['remisiones']:
                                                 tgt['remisiones'].append(rfolio)
 
-                        # === FACT_ANT dentro del combinado (si existe)
+                        # === FACT_ANT dentro del combinado (ajustado)
                         fa_pairs = _scan_fact_ant_pairs_from_workbook(combined_path, eng)
                         for fac, pid in fa_pairs or []:
                             tgt = idx_by_pedido.get(pid)
@@ -1171,7 +1171,7 @@ def _vv_load_rows_from_excel() -> list:
                                             if rfolio not in tgt['remisiones']:
                                                 tgt['remisiones'].append(rfolio)
 
-                        # FACT_ANT suelto (además del del libro)
+                        # FACT_ANT suelto (además del del libro) — ajustado
                         if path_fact_ant and os.path.exists(path_fact_ant):
                             try:
                                 try:
@@ -1275,7 +1275,7 @@ def _vv_load_rows_from_excel() -> list:
                                         'vendedor': _vv_clean_val(r.get('vendedor','')),
                                     })
 
-                                # FACT_ANT combinado o suelto
+                                # FACT_ANT combinado o suelto — ajustado
                                 fa_pairs = _scan_fact_ant_pairs_from_workbook(combined_path, eng)
                                 if (not fa_pairs) and path_fact_ant and os.path.exists(path_fact_ant):
                                     try:
@@ -1537,6 +1537,7 @@ def _vv_load_rows_from_excel() -> list:
         rows = _vv_store_load()
         _VV_CACHE["rows"] = rows
         return rows
+
 
 
 
