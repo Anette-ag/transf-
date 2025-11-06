@@ -1978,17 +1978,22 @@ except RuntimeError as e:
     print(f"❌ Config DB: {e}")
     raise
 
-from sqlalchemy.pool import NullPool
-
 app.config.update(
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        "poolclass": NullPool,          # << usa el pool de PgBouncer; sin colas en la app
-        "pool_pre_ping": True,          # valida conexiones rotas
-        "connect_args": {
-            "sslmode": "require",
-            "connect_timeout": 5,
-            "prepare_threshold": 0,     # << clave: desactiva prepared statements (psycopg3)
+    SQLALCHEMY_ENGINE_OPTIONS={
+        'pool_pre_ping': True,
+        'pool_recycle': 300,    # 5 min: evita conexiones rancias en PgBouncer
+        'pool_size': 5,
+        'max_overflow': 5,
+        'pool_timeout': 20,
+        # los connect_args solo aplican con create_engine(); con Flask-SQLAlchemy se pasan igual:
+        'connect_args': {
+            'sslmode': 'require',
+            'connect_timeout': 10,
+            'keepalives': 1,
+            'keepalives_idle': 30,
+            'keepalives_interval': 10,
+            'keepalives_count': 3,
         },
     },
     UPLOAD_FOLDER=UPLOAD_FOLDER,
@@ -2026,19 +2031,18 @@ login_manager.login_view = 'login'
 # --- Healthcheck DB --- 
 
 def db_ready() -> bool:
-    """Verifica si la base está lista y limpia el pool si falla."""
+    """Verifica si la base de datos está lista SIN martillar a PgBouncer."""
     try:
         with db.engine.connect() as conn:
+            # Opción 1 (SQLAlchemy 2.x “crudo”)
             conn.exec_driver_sql("SELECT 1")
+            # Opción 2 equivalente:
+            # conn.execute(text("SELECT 1"))
         return True
     except Exception:
-        try:
-            db.engine.dispose()   # << limpia conexiones “stale”
-        except Exception:
-            pass
         app.logger.exception("DB no lista / error de conexión")
+        time.sleep(0.5)  # pequeño respiro para no agotar el pool en congestión
         return False
-
 
 # Modelos de base de datos
 class User(UserMixin, db.Model):
