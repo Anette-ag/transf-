@@ -1655,38 +1655,53 @@ def vv_data():
         return jsonify({"error": "No autorizado"}), 401
 
     try:
-        # 1) Intentar leer primero de la BD
-        sql = text("""
-            select
-                pedido_label      as pedido,
-                fecha,
-                remisiones,
-                factura_anticipo,
-                factura_remision,
-                status,
-                vendedor
-            from public.remisiones_consolidadas
-            order by pedido_label asc
-        """)
-        with db.engine.begin() as conn:
-            rows_db = [dict(r) for r in conn.execute(sql).mappings().all()]
+        rows_db = []
+        source_name = None
 
-        source_name = "DB (remisiones_consolidadas)"
+        # 1) Intentar DB si está lista
+        try:
+            if db_ready():  # <- tu función que hace connect SELECT 1
+                sql = text("""
+                    select
+                        pedido_label      as pedido,
+                        fecha,
+                        remisiones,
+                        factura_anticipo,
+                        factura_remision,
+                        status,
+                        vendedor
+                    from public.remisiones_consolidadas
+                    order by pedido_label asc
+                """)
+                # IMPORTANTE: usar connect() en lugar de begin()
+                with db.engine.connect() as conn:
+                    rows_db = [dict(r) for r in conn.execute(sql).mappings().all()]
+                source_name = "DB (remisiones_consolidadas)"
+            else:
+                source_name = "DB no disponible"
+        except Exception as e:
+            # Si la DB cae a mitad, seguimos en fallback
+            app.logger.error(f"[vv] DB inaccesible en /vv/data: {e}")
+            source_name = "DB caída"
 
-        # 2) Si la BD no tiene datos, caemos a Excel y (si hay) persistimos
+        # 2) Si DB no trajo datos, caemos a Excel y (si hay DB) persistimos sin romper respuesta
         if not rows_db:
             rows_snake = _vv_load_rows_from_excel()  # [{'fecha','pedido',...}]
-            if rows_snake:
-                try:
-                    _vv_upsert_consolidado(rows_snake)
-                except Exception as e:
-                    app.logger.error(f"[vv] Error persistiendo fallback Excel->DB: {e}")
-                rows_db = rows_snake
-                source_name = "Excel (fallback)"
-            else:
-                rows_db = []
+            rows_db = rows_snake or []
+            # Etiqueta de fuente según el motivo
+            source_name = "Excel (fallback)" if rows_snake else (source_name or "Sin datos")
 
-        # 3) Normalizar llaves esperadas por el front (defensas por si acaso)
+            # Intento de persistir SÓLO si la DB está lista; no bloquea respuesta
+            try:
+                if rows_snake and db_ready():
+                    _vv_upsert_consolidado(rows_snake)
+                elif rows_snake:
+                    source_name = "Excel (cache-db-fail)"
+            except Exception as e:
+                app.logger.error(f"[vv] Error persistiendo fallback Excel->DB: {e}")
+                source_name = "Excel (cache-db-fail)"
+
+        # 3) Normalizar llaves esperadas por el front
         for r in rows_db:
             r.setdefault("fecha", "")
             r.setdefault("pedido", "")
@@ -1696,7 +1711,7 @@ def vv_data():
             r.setdefault("status", "")
             r.setdefault("vendedor", "")
 
-        # 4) Aplicar filtros de faltantes (?missing_anticipo=1&missing_remision=1&missing_facrem=1)
+        # 4) Filtros de faltantes
         rows_filtered = _vv_apply_missing_filters_snake(rows_db, request.args)
 
         # 5) Mapear al formato de 7 columnas del frontend
@@ -1728,6 +1743,7 @@ def vv_data():
             "error": str(e),
             "source": None
         }), 500
+
 
 def _vv_upsert_consolidado(rows: list[dict]) -> int:
     """
@@ -2872,9 +2888,14 @@ def parse_bbva(path):
         app.logger.error(f"[BBVA] Error general: {e}")
         flash("No se pudo procesar el archivo de BBVA.", "error")
         return []
+    
 @login_manager.user_loader
 def load_user(user_id):
-    return db.session.get(User, int(user_id))
+    try:
+        return db.session.get(User, int(user_id))
+    except Exception:
+        # Si la DB no responde, evita que Flask-Login truene.
+        return None
 
 def allowed_file(filename):
     ALLOWED_EXTENSIONS = {'csv', 'xlsx', 'xls'}
@@ -2973,6 +2994,24 @@ def registro_usuario():
 
     return render_template('registro_usuario.html')
 
+from flask import current_app, request
+
+@app.before_request
+def vv_fail_open_login():
+    """
+    Si la ruta es /vv (o subrutas) y la DB no está lista,
+    desactiva temporalmente el requisito de login para esta petición.
+    En el resto, se mantiene el login normal.
+    """
+    try:
+        is_vv = request.path == "/vv" or request.path.startswith("/vv/")
+        if is_vv and not db_ready():
+            current_app.config["LOGIN_DISABLED"] = True
+        else:
+            current_app.config["LOGIN_DISABLED"] = False
+    except Exception:
+        # Si algo raro pasa aquí, mejor no desactivar login
+        current_app.config["LOGIN_DISABLED"] = False
 
 
 @app.route('/admin/usuarios')
