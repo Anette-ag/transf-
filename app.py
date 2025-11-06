@@ -1648,6 +1648,8 @@ def _vv_apply_missing_filters_snake(rows: list[dict], args) -> list[dict]:
 
 
 # --- Ruta /vv/data (única definición) ---
+from sqlalchemy.exc import OperationalError  # <-- agrega este import
+
 @app.get("/vv/data")
 @login_required
 def vv_data():
@@ -1655,7 +1657,7 @@ def vv_data():
         return jsonify({"error": "No autorizado"}), 401
 
     try:
-        # 1) Intentar leer primero de la BD
+        # 1) Intentar leer primero de la BD (sin transacción)
         sql = text("""
             select
                 pedido_label      as pedido,
@@ -1668,8 +1670,17 @@ def vv_data():
             from public.remisiones_consolidadas
             order by pedido_label asc
         """)
-        with db.engine.begin() as conn:
-            rows_db = [dict(r) for r in conn.execute(sql).mappings().all()]
+
+        def _read_db():
+            with db.engine.connect() as conn:   # <-- sin begin()
+                return [dict(r) for r in conn.execute(sql).mappings().all()]
+
+        try:
+            rows_db = _read_db()
+        except OperationalError:
+            # Pool “stale”: limpia y reintenta UNA vez
+            db.engine.dispose()
+            rows_db = _read_db()
 
         source_name = "DB (remisiones_consolidadas)"
 
@@ -1728,6 +1739,7 @@ def vv_data():
             "error": str(e),
             "source": None
         }), 500
+
 
 def _vv_upsert_consolidado(rows: list[dict]) -> int:
     """
@@ -1793,14 +1805,14 @@ def _ensure_postgres_uri(uri: str) -> str:
     if not uri:
         return uri
 
+    # Normaliza el esquema base
     fixed = uri.replace('postgres://', 'postgresql://', 1)
 
-    prefer_driver = 'psycopg' if sys.version_info >= (3, 13) else 'psycopg2'
-    fixed = fixed.replace('postgresql+psycopg2://', 'postgresql://', 1)
-    fixed = fixed.replace('postgresql+psycopg://', 'postgresql://', 1)
+    # Fuerza psycopg (driver nuevo) – ideal para Python 3.13 y PgBouncer
     if fixed.startswith('postgresql://'):
-        fixed = fixed.replace('postgresql://', f'postgresql+{prefer_driver}://', 1)
+        fixed = fixed.replace('postgresql://', 'postgresql+psycopg://', 1)
 
+    # Asegura SSL
     if 'sslmode=' not in fixed:
         fixed += ('&' if '?' in fixed else '?') + 'sslmode=require'
 
@@ -1858,12 +1870,21 @@ except RuntimeError as e:
 app.config.update(
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
     SQLALCHEMY_ENGINE_OPTIONS={
-    'pool_pre_ping': True,
-    'pool_recycle': 1800,
-    'pool_size': 3,      # antes 10
-    'max_overflow': 2,   # antes 5
-    'pool_timeout': 30,
-},
+        'pool_pre_ping': True,
+        'pool_recycle': 300,    # 5 min: evita conexiones rancias en PgBouncer
+        'pool_size': 5,
+        'max_overflow': 5,
+        'pool_timeout': 20,
+        # los connect_args solo aplican con create_engine(); con Flask-SQLAlchemy se pasan igual:
+        'connect_args': {
+            'sslmode': 'require',
+            'connect_timeout': 10,
+            'keepalives': 1,
+            'keepalives_idle': 30,
+            'keepalives_interval': 10,
+            'keepalives_count': 3,
+        },
+    },
     UPLOAD_FOLDER=UPLOAD_FOLDER,
     MAX_CONTENT_LENGTH = 64 * 1024 * 1024,
     SESSION_COOKIE_SECURE=True,
@@ -2016,6 +2037,30 @@ def _mk_referencia_fallback(banco, fecha, monto, concepto, idx):
     base = f"{banco}|{fecha}|{monto:.2f}|{str(concepto)[:30]}|{idx}"
     # cadena estable y "única" para evitar chocar con unique(referencia)
     return "AUTO-" + uuid.uuid5(uuid.NAMESPACE_URL, base).hex[:18].upper()
+
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
+from flask import jsonify
+
+@app.get("/health/db")
+def health_db():
+    try:
+        # Conexión SIN transacción
+        with db.engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return jsonify(status="ok"), 200
+    except OperationalError:
+        # Limpia pool y reintenta una vez
+        try:
+            db.engine.dispose()
+            with db.engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return jsonify(status="ok_after_retry"), 200
+        except Exception as e2:
+            return jsonify(status="fail", error=str(e2)), 500
+    except Exception as e:
+        return jsonify(status="fail", error=str(e)), 500
+
 
 def _norm_factura(s: str) -> str:
     """
