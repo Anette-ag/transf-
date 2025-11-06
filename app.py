@@ -1664,7 +1664,7 @@ def vv_data():
                 sql = text("""
                     select
                         pedido_label      as pedido,
-                        fecha,
+                        coalesce(to_char(fecha, 'DD/MM/YYYY'), '') as fecha,
                         remisiones,
                         factura_anticipo,
                         factura_remision,
