@@ -1978,18 +1978,17 @@ except RuntimeError as e:
     print(f"❌ Config DB: {e}")
     raise
 
+from sqlalchemy.pool import NullPool
+
 app.config.update(
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
-        SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_pre_ping": True,      # detecta y recicla conexiones rotas
-        "pool_recycle": 60,         # recicla cada ~60s (evita “stale” tras restart)
-        "pool_size": 1,             # con PgBouncer conviene 1 conexión por proceso
-        "max_overflow": 0,          # evita ráfagas de conexiones
-        "pool_timeout": 10,         # espera corta
-        "pool_use_lifo": True,      # entrega la conexión más reciente
-        "connect_args": {           # endurece el connect
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "poolclass": NullPool,          # << usa el pool de PgBouncer; sin colas en la app
+        "pool_pre_ping": True,          # valida conexiones rotas
+        "connect_args": {
             "sslmode": "require",
-            "connect_timeout": 5
+            "connect_timeout": 5,
+            "prepare_threshold": 0,     # << clave: desactiva prepared statements (psycopg3)
         },
     },
     UPLOAD_FOLDER=UPLOAD_FOLDER,
@@ -2027,15 +2026,14 @@ login_manager.login_view = 'login'
 # --- Healthcheck DB --- 
 
 def db_ready() -> bool:
-    """Verifica si la base de datos está lista y limpia el pool si falla."""
+    """Verifica si la base está lista y limpia el pool si falla."""
     try:
         with db.engine.connect() as conn:
             conn.exec_driver_sql("SELECT 1")
         return True
     except Exception:
-        # limpia el pool por si hay conexiones “stale”
         try:
-            db.engine.dispose()
+            db.engine.dispose()   # << limpia conexiones “stale”
         except Exception:
             pass
         app.logger.exception("DB no lista / error de conexión")
@@ -2141,20 +2139,6 @@ def _to_date_any(x, dayfirst=True):
         return pd.to_datetime(x, dayfirst=dayfirst, errors='coerce').date()
     except Exception:
         return None
-
-@app.get("/healthz")
-def healthz():
-    try:
-        with db.engine.connect() as conn:
-            conn.exec_driver_sql("SELECT 1")
-        return ("OK", 200)
-    except Exception:
-        try:
-            db.engine.dispose()
-        except Exception:
-            pass
-        return ("DB DOWN", 500)
-
 
 def _mk_referencia_fallback(banco, fecha, monto, concepto, idx):
     base = f"{banco}|{fecha}|{monto:.2f}|{str(concepto)[:30]}|{idx}"
