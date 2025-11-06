@@ -1761,10 +1761,6 @@ def _vv_apply_missing_filters_snake(rows: list[dict], args) -> list[dict]:
             filtered.append(r)
     return filtered
 
-
-# --- Ruta /vv/data (única definición) ---
-from sqlalchemy.exc import OperationalError  # <-- agrega este import
-
 @app.get("/vv/data")
 @login_required
 def vv_data():
@@ -1984,20 +1980,16 @@ except RuntimeError as e:
 
 app.config.update(
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
-    SQLALCHEMY_ENGINE_OPTIONS={
-        'pool_pre_ping': True,
-        'pool_recycle': 300,    # 5 min: evita conexiones rancias en PgBouncer
-        'pool_size': 5,
-        'max_overflow': 5,
-        'pool_timeout': 20,
-        # los connect_args solo aplican con create_engine(); con Flask-SQLAlchemy se pasan igual:
-        'connect_args': {
-            'sslmode': 'require',
-            'connect_timeout': 10,
-            'keepalives': 1,
-            'keepalives_idle': 30,
-            'keepalives_interval': 10,
-            'keepalives_count': 3,
+        SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_pre_ping": True,      # detecta y recicla conexiones rotas
+        "pool_recycle": 60,         # recicla cada ~60s (evita “stale” tras restart)
+        "pool_size": 1,             # con PgBouncer conviene 1 conexión por proceso
+        "max_overflow": 0,          # evita ráfagas de conexiones
+        "pool_timeout": 10,         # espera corta
+        "pool_use_lifo": True,      # entrega la conexión más reciente
+        "connect_args": {           # endurece el connect
+            "sslmode": "require",
+            "connect_timeout": 5
         },
     },
     UPLOAD_FOLDER=UPLOAD_FOLDER,
@@ -2035,18 +2027,20 @@ login_manager.login_view = 'login'
 # --- Healthcheck DB --- 
 
 def db_ready() -> bool:
-    """Verifica si la base de datos está lista SIN martillar a PgBouncer."""
+    """Verifica si la base de datos está lista y limpia el pool si falla."""
     try:
         with db.engine.connect() as conn:
-            # Opción 1 (SQLAlchemy 2.x “crudo”)
             conn.exec_driver_sql("SELECT 1")
-            # Opción 2 equivalente:
-            # conn.execute(text("SELECT 1"))
         return True
     except Exception:
+        # limpia el pool por si hay conexiones “stale”
+        try:
+            db.engine.dispose()
+        except Exception:
+            pass
         app.logger.exception("DB no lista / error de conexión")
-        time.sleep(0.5)  # pequeño respiro para no agotar el pool en congestión
         return False
+
 
 # Modelos de base de datos
 class User(UserMixin, db.Model):
@@ -2147,6 +2141,20 @@ def _to_date_any(x, dayfirst=True):
         return pd.to_datetime(x, dayfirst=dayfirst, errors='coerce').date()
     except Exception:
         return None
+
+@app.get("/healthz")
+def healthz():
+    try:
+        with db.engine.connect() as conn:
+            conn.exec_driver_sql("SELECT 1")
+        return ("OK", 200)
+    except Exception:
+        try:
+            db.engine.dispose()
+        except Exception:
+            pass
+        return ("DB DOWN", 500)
+
 
 def _mk_referencia_fallback(banco, fecha, monto, concepto, idx):
     base = f"{banco}|{fecha}|{monto:.2f}|{str(concepto)[:30]}|{idx}"
