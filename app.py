@@ -1858,16 +1858,17 @@ except RuntimeError as e:
 app.config.update(
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
     SQLALCHEMY_ENGINE_OPTIONS={
-        'pool_pre_ping': True,       # valida conexión antes de usarla
-        'pool_recycle': 300,         # recicla conexiones cada 5 min
-        'pool_size': 3,              # conexiones base
-        'max_overflow': 2,           # conexiones extra temporales
-        'pool_timeout': 30,          # tiempo máximo para esperar conexión libre
-        'pool_use_lifo': True,       # usa el último libre primero
-        'connect_args': {            # parámetros específicos para psycopg3
-            'connect_timeout': 10,
-            'prepare_threshold': 0,  # importante para Supabase pooler
-            'sslmode': 'require',
+        "pool_pre_ping": True,
+        "pool_recycle": 300,
+        "pool_size": 3,
+        "max_overflow": 2,
+        "pool_timeout": 30,
+        "pool_use_lifo": True,
+        "connect_args": {
+            "connect_timeout": 20,
+            "prepare_threshold": 0,   # psycopg3 + PgBouncer
+            "sslmode": "require",
+            "application_name": "render-transf-app",
         },
     },
     UPLOAD_FOLDER=UPLOAD_FOLDER,
@@ -1892,21 +1893,22 @@ print("================================================")
 db = SQLAlchemy(app)
 
 # --- PING DB autónomo (no usa db.session) ---
+from time import sleep
+from sqlalchemy import exc
+
 @app.get("/db/ping")
 def db_ping():
-    try:
-        # Conexión corta, fuera de cualquier transacción
-        with db.engine.connect() as conn:
-            conn = conn.execution_options(isolation_level="AUTOCOMMIT")
-            conn.exec_driver_sql("SELECT 1")   # evita begin()
-        return jsonify(ok=True), 200
-    except Exception as e:
-        app.logger.exception("DB no lista / error de conexión")
-        # Si falla, cerramos el pool para forzar reconexión limpia en el próximo request
+    for i in range(3):  # 3 intentos
         try:
+            with db.engine.connect() as conn:
+                conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+                conn.exec_driver_sql("SELECT 1")
+            return jsonify(ok=True), 200
+        except exc.OperationalError as e:
+            app.logger.warning(f"Ping intento {i+1} falló: {e}")
             db.engine.dispose()
-        finally:
-            return jsonify(ok=False, error=str(e)), 500
+            sleep(1 + i)  # backoff 1s, 2s, 3s
+    return jsonify(ok=False, error="DB no responde tras reintentos"), 500
 
 
 # 4) Cerrar sesiones SIEMPRE al final del request/app context
