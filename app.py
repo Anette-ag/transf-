@@ -455,104 +455,6 @@ def vv_inspect_file():
     except Exception as e:
         return jsonify({"error": f"No se pudo leer: {str(e)}"})
 
-@csrf.exempt
-@app.post("/vv/upload-masivo")
-@login_required
-def vv_upload_masivo():
-    """
-    Carga masiva a public.remisiones_consolidadas usando pandas.to_sql en chunks.
-    Requiere que el Excel tenga columnas: fecha, pedido, remisiones, factura_anticipo, factura_remision, status, vendedor
-    """
-    if not session.get("vv_ok"):
-        return jsonify({"error": "No autorizado"}), 401
-
-    f = request.files.get("file")
-    if not f:
-        return jsonify({"ok": False, "error": "Falta archivo"}), 400
-
-    from werkzeug.utils import secure_filename
-    fname = secure_filename(f.filename or "data.xlsx")
-    path = os.path.join(UPLOAD_FOLDER, fname)
-    f.save(path)
-
-    # Lee en chunks y normaliza columnas (reutiliza tu _vv_normalize_columns si gustas)
-    total_rows = 0
-
-    def _insert_chunk(conn, df):
-        # Asegura columnas esperadas
-        df = _vv_normalize_columns(df)
-        # Renombra a nombres de tabla destino
-        df = df.rename(columns={"pedido": "pedido_label"})
-        # Deriva pedido_num (solo dígitos de label)
-        df["pedido_num"] = df["pedido_label"].astype(str).str.replace(r"\D+", "", regex=True)
-        df["pedido_num"] = df["pedido_num"].where(df["pedido_num"].str.len() > 0, df["pedido_label"])
-        # Trunca fecha a 10
-        df["fecha"] = df["fecha"].astype(str).str.slice(0, 10)
-
-        # Inserta en tabla TEMP para después hacer UPSERT con SQL nativo (más seguro)
-        tmp_table = "remisiones_consolidadas_tmp"
-        df.to_sql(
-            tmp_table, con=conn, schema="public",
-            if_exists="append", index=False, chunksize=1000, method="multi"
-        )
-
-        # UPSERT desde la temp (1 statement)
-        conn.execute(text(f"""
-            insert into public.remisiones_consolidadas
-                (pedido_num, pedido_label, fecha, remisiones, factura_anticipo, factura_remision, status, vendedor)
-            select
-                pedido_num, pedido_label, fecha, remisiones, factura_anticipo, factura_remision, status, vendedor
-            from public.{tmp_table}
-            on conflict (pedido_num) do update set
-                pedido_label      = excluded.pedido_label,
-                fecha             = excluded.fecha,
-                remisiones        = excluded.remisiones,
-                factura_anticipo  = excluded.factura_anticipo,
-                factura_remision  = excluded.factura_remision,
-                status            = excluded.status,
-                vendedor          = excluded.vendedor,
-                updated_at        = now()
-        """))
-        conn.execute(text(f"truncate table public.{tmp_table}"))
-
-    # Crea la tabla temporal si no existe
-    def _ensure_tmp(conn):
-        conn.execute(text("""
-            create table if not exists public.remisiones_consolidadas_tmp (
-                pedido_num text,
-                pedido_label text,
-                fecha text,
-                remisiones text,
-                factura_anticipo text,
-                factura_remision text,
-                status text,
-                vendedor text
-            )
-        """))
-
-    try:
-        import pandas as pd
-        engine = db.engine
-
-        def _process(conn):
-            nonlocal total_rows
-            _ensure_tmp(conn)
-            # Lee por chunks
-            for chunk in pd.read_excel(path, dtype=str, chunksize=1000):
-                # normaliza y sube por lote
-                _insert_chunk(conn, chunk)
-                total_rows += len(chunk)
-
-        # Transacción CORTA por chunk, con timeouts elevados para carga
-        db_exec_in_tx(_process, st_timeout_s=180, idle_tx_s=90)
-
-        return jsonify({"ok": True, "filename": fname, "inserted": total_rows})
-
-    except Exception as e:
-        app.logger.exception("Error en upload-masivo")
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
 @app.get("/vv/debug-file")
 @login_required
 def vv_debug_file():
@@ -1753,8 +1655,8 @@ def vv_data():
         return jsonify({"error": "No autorizado"}), 401
 
     try:
-        # 1) Leer desde la BD SIN transacción y con timeouts locales
-        rows_db = [dict(r) for r in db_select("""
+        # 1) Intentar leer primero de la BD
+        sql = text("""
             select
                 pedido_label      as pedido,
                 fecha,
@@ -1765,11 +1667,13 @@ def vv_data():
                 vendedor
             from public.remisiones_consolidadas
             order by pedido_label asc
-        """, st_timeout_s=60, idle_tx_s=30)]
+        """)
+        with db.engine.begin() as conn:
+            rows_db = [dict(r) for r in conn.execute(sql).mappings().all()]
 
         source_name = "DB (remisiones_consolidadas)"
 
-        # 2) Si la BD no tiene datos, caer a Excel y (si hay) persistir
+        # 2) Si la BD no tiene datos, caemos a Excel y (si hay) persistimos
         if not rows_db:
             rows_snake = _vv_load_rows_from_excel()  # [{'fecha','pedido',...}]
             if rows_snake:
@@ -1782,7 +1686,7 @@ def vv_data():
             else:
                 rows_db = []
 
-        # 3) Normalizar llaves esperadas por el front
+        # 3) Normalizar llaves esperadas por el front (defensas por si acaso)
         for r in rows_db:
             r.setdefault("fecha", "")
             r.setdefault("pedido", "")
@@ -1824,7 +1728,6 @@ def vv_data():
             "error": str(e),
             "source": None
         }), 500
-
 
 def _vv_upsert_consolidado(rows: list[dict]) -> int:
     """
@@ -1871,11 +1774,9 @@ def _vv_upsert_consolidado(rows: list[dict]) -> int:
     """)
 
     with app.app_context():
-        def _do(conn):
+        with db.engine.begin() as conn:
             conn.execute(sql, payload)
             return len(payload)
-        return db_exec_in_tx(_do, st_timeout_s=120, idle_tx_s=60)
-
 
 
 def _mask_url_safe(u: str) -> str:
@@ -1957,21 +1858,14 @@ except RuntimeError as e:
 app.config.update(
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
     SQLALCHEMY_ENGINE_OPTIONS={
-        "pool_pre_ping": True,
-        "pool_recycle": 300,
-        "pool_size": 3,
-        "max_overflow": 2,
-        "pool_timeout": 30,
-        "pool_use_lifo": True,
-        "connect_args": {
-            "connect_timeout": 20,
-            "prepare_threshold": 0,   # psycopg3 + PgBouncer
-            "sslmode": "require",
-            "application_name": "render-transf-app",
-        },
-    },
+    'pool_pre_ping': True,
+    'pool_recycle': 1800,
+    'pool_size': 3,      # antes 10
+    'max_overflow': 2,   # antes 5
+    'pool_timeout': 30,
+},
     UPLOAD_FOLDER=UPLOAD_FOLDER,
-    MAX_CONTENT_LENGTH=64 * 1024 * 1024,
+    MAX_CONTENT_LENGTH = 64 * 1024 * 1024,
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
@@ -1981,7 +1875,6 @@ app.config.update(
     PROPAGATE_EXCEPTIONS=True,
 )
 
-
 print("=== DEBUG: CONFIGURACIÓN FINAL (enmascarada) ===")
 print("SQLALCHEMY_DATABASE_URI:", _mask_url_safe(app.config.get('SQLALCHEMY_DATABASE_URI', '')))
 print("================================================")
@@ -1990,62 +1883,6 @@ print("================================================")
 # Inicialización de extensiones
 # -----------------------------
 db = SQLAlchemy(app)
-
-# === Helpers DB con timeouts locales por request ===
-from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
-
-def db_select(sql: str, params: dict | None = None, st_timeout_s: int = 60, idle_tx_s: int = 30):
-    """
-    SELECT sin transacción larga. Aplica SET LOCAL timeouts por request.
-    """
-    try:
-        with db.engine.connect() as conn:  # OJO: connect() SIN begin()
-            conn.execute(text(f"SET LOCAL statement_timeout = '{st_timeout_s}s'"))
-            conn.execute(text(f"SET LOCAL idle_in_transaction_session_timeout = '{idle_tx_s}s'"))
-            return conn.execute(text(sql), params or {}).mappings().all()
-    except OperationalError:
-        # Si PgBouncer corta la conexión, resetea el pool para el próximo intento
-        db.engine.dispose()
-        raise
-
-def db_exec_in_tx(fn, st_timeout_s: int = 120, idle_tx_s: int = 60):
-    """
-    Ejecuta una función que hace escrituras dentro de una transacción CORTA.
-    Aplica SET LOCAL timeouts dentro de la transacción.
-    Uso:
-        def _do(conn):
-            conn.execute(text("..."))
-        db_exec_in_tx(_do)
-    """
-    try:
-        with db.engine.begin() as conn:  # transacción corta
-            conn.execute(text(f"SET LOCAL statement_timeout = '{st_timeout_s}s'"))
-            conn.execute(text(f"SET LOCAL idle_in_transaction_session_timeout = '{idle_tx_s}s'"))
-            return fn(conn)
-    except OperationalError:
-        db.engine.dispose()
-        raise
-
-
-# --- PING DB autónomo (no usa db.session) ---
-from time import sleep
-from sqlalchemy import exc
-
-@app.get("/db/ping")
-def db_ping():
-    for i in range(3):  # 3 intentos
-        try:
-            with db.engine.connect() as conn:
-                conn = conn.execution_options(isolation_level="AUTOCOMMIT")
-                conn.exec_driver_sql("SELECT 1")
-            return jsonify(ok=True), 200
-        except exc.OperationalError as e:
-            app.logger.warning(f"Ping intento {i+1} falló: {e}")
-            db.engine.dispose()
-            sleep(1 + i)  # backoff 1s, 2s, 3s
-    return jsonify(ok=False, error="DB no responde tras reintentos"), 500
-
 
 # 4) Cerrar sesiones SIEMPRE al final del request/app context
 @app.teardown_appcontext
