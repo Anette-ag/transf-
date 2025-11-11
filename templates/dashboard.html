@@ -1,8 +1,8 @@
-{% extends 'layout.html' %} 
+{% extends 'layout.html' %}
 
-{% block title %}Dashboard - Sistema de Transferencias{% endblock %} 
+{% block title %}Dashboard - Sistema de Transferencias{% endblock %}
 
-{% block content %} 
+{% block content %}
 <h2 class="mb-4">Bienvenido {{ current_user.username }}</h2>
 
 <!-- Tabs Navigation -->
@@ -24,22 +24,23 @@
   </li>
 </ul>
 
-<!-- Tab Content -->
 <div class="tab-content">
-  <!-- Transferencias Tab -->
+  <!-- ===================== TRANSFERENCIAS ===================== -->
   <div class="tab-pane fade show active" id="tab-transferencias" role="tabpanel" aria-labelledby="transferencias-tab">
     <div class="mb-4 d-flex flex-wrap gap-2">
       <a href="{{ url_for('registro') }}" class="btn btn-outline-primary">
         <i class="bi bi-plus-circle"></i> Nueva Transferencia
       </a>
+
       <a href="{{ url_for('subir_archivo') }}" class="btn btn-outline-warning">
         <i class="bi bi-upload"></i> Subir Archivo
       </a>
+
       <button class="btn btn-outline-success" data-bs-toggle="modal" data-bs-target="#modalSubirBancos">
         <i class="bi bi-bank"></i> Subir Extracto
       </button>
 
-      <!-- 🔹 NUEVO: Subida de Facturas/NC (autosubmit al elegir archivo) -->
+      <!-- Subida Facturas/NC (autosubmit) -->
       <form action="{{ url_for('facturas_aplicar_a_transferencias') }}" method="POST" enctype="multipart/form-data" class="d-inline" id="formEmitidas">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label class="btn btn-outline-dark mb-0">
@@ -48,48 +49,58 @@
                  onchange="document.getElementById('formEmitidas').submit()">
         </label>
       </form>
-      <!-- 🔹 Fin nuevo bloque -->
 
       {% if current_user.is_admin %}
       <a href="{{ url_for('admin_usuarios') }}" class="btn btn-outline-info">
         <i class="bi bi-people"></i> Usuarios
       </a>
       {% endif %}
+
+      <!-- Exportar CSV Transferencias -->
+      <button id="btn-export-transferencias" class="btn btn-outline-success">
+        <i class="bi bi-file-earmark-spreadsheet"></i> Exportar CSV
+      </button>
+
       <a href="{{ url_for('logout') }}" class="btn btn-outline-secondary ms-auto">
         <i class="bi bi-box-arrow-right"></i> Salir
       </a>
     </div>
-    
-<!-- Botones de filtrado por banco receptor -->
-<div class="mb-3">
-  <div class="d-flex flex-wrap gap-2 align-items-center">
-    <span class="fw-bold">Filtrar por banco receptor:</span>
-    <a href="{{ url_for('dashboard') }}" class="btn btn-sm {% if not banco_receptor_activo %}btn-primary{% else %}btn-outline-primary{% endif %}">
-      Todos ({{ total_transferencias }})
-    </a>
-    {% for banco, count in bancos_ordenados %}
-    <a href="{{ url_for('dashboard', banco_receptor=banco) }}" class="btn btn-sm {% if banco_receptor_activo == banco %}btn-primary{% else %}btn-outline-primary{% endif %}">
-      {{ banco }} ({{ count }})
-    </a>
-    {% endfor %}
-  </div>
-</div>
 
-    
-    <form method="POST" action="{{ url_for('eliminar_todas') }}" class="d-inline" onsubmit="return confirm('¿Eliminar TODAS las transferencias? Esta acción no se puede deshacer.');">
+    <!-- Filtros por banco receptor -->
+    <div class="mb-3">
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        <span class="fw-bold">Filtrar por banco receptor:</span>
+        <a href="{{ url_for('dashboard') }}"
+           class="btn btn-sm {% if not banco_receptor_activo %}btn-primary{% else %}btn-outline-primary{% endif %}">
+          Todos ({{ total_transferencias }})
+        </a>
+        {% for banco, count in bancos_ordenados %}
+        <a href="{{ url_for('dashboard', banco_receptor=banco) }}"
+           class="btn btn-sm {% if banco_receptor_activo == banco %}btn-primary{% else %}btn-outline-primary{% endif %}">
+          {{ banco }} ({{ count }})
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Eliminar todo transferencias -->
+    <form method="POST" action="{{ url_for('eliminar_todas') }}" class="d-inline"
+          onsubmit="return confirm('¿Eliminar TODAS las transferencias? Esta acción no se puede deshacer.');">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-outline-danger">
         <i class="bi bi-trash3"></i> Eliminar todo
       </button>
     </form>
 
-    <!-- Filtros -->
+    <!-- Filtros Transferencias -->
     <form method="GET" class="row g-3 mb-4">
       <div class="col-md-3">
-        <input type="text" name="referencia" class="form-control" placeholder="Referencia" value="{{ request.args.get('referencia', '') }}">
+        <input type="text" name="referencia" class="form-control" placeholder="Referencia"
+               value="{{ request.args.get('referencia', '') }}">
       </div>
       <div class="col-md-2">
-        <input type="date" name="fecha" class="form-control" value="{{ request.args.get('fecha', '') }}">
+        <input type="date" name="fecha" class="form-control"
+               value="{{ request.args.get('fecha', '') }}">
       </div>
       <div class="col-md-2">
         <select name="banco" class="form-select">
@@ -118,7 +129,7 @@
       </div>
     </form>
 
-    <!-- Tabla de Transferencias -->
+    <!-- Tabla Transferencias -->
     {% if transferencias %}
     <div class="table-responsive">
       <table class="table table-hover table-bordered align-middle">
@@ -139,27 +150,37 @@
         </thead>
         <tbody>
           {% for t in transferencias %}
-          <tr {% if t.esta_registrado %} class="table-success" {% elif t.concepto and t.concepto.startswith('[RECHAZADO]') %} class="table-danger" {% endif %} >
+          <tr
+            {% if t.esta_registrado %}
+              class="table-success"
+            {% elif t.concepto and t.concepto.startswith('[RECHAZADO]') %}
+              class="table-danger"
+            {% endif %}>
             <td>{{ t.fecha if t.fecha and t.fecha != 'None' else 'N/A' }}</td>
             <td>{{ t.banco }}</td>
             <td>{{ t.banco_receptor }}</td>
             <td>${{ "%.2f"|format(t.monto) }}</td>
             <td>{{ t.referencia }}</td>
             <td class="concepto-wrap" title="{{ t.concepto }}" data-bs-toggle="tooltip">{{ t.concepto }}</td>
-            <td>{{ t.pedido if t.pedido else '' }}</td>
-            <td>{{ t.factura if t.factura else '' }}</td>
-            <td>{{ t.registrado if t.registrado else '' }}</td>
+            <td>{{ t.pedido or '' }}</td>
+            <td>{{ t.factura or '' }}</td>
+            <td>{{ t.registrado or '' }}</td>
             <td>
               <form method="POST" action="{{ url_for('toggle_registrado', id=t.id) }}" class="d-inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="checkbox" name="esta_registrado" {% if t.esta_registrado %}checked{% endif %} onchange="this.form.submit()" style="width: 18px; height: 18px; cursor: pointer;">
+                <input type="checkbox" name="esta_registrado"
+                       {% if t.esta_registrado %}checked{% endif %}
+                       onchange="this.form.submit()"
+                       style="width:18px;height:18px;cursor:pointer;">
               </form>
             </td>
             <td class="text-nowrap">
               <a href="{{ url_for('editar', id=t.id) }}" class="btn btn-sm btn-outline-primary" title="Editar">
                 <i class="bi bi-pencil"></i>
               </a>
-              <button class="btn btn-sm btn-outline-danger" title="Eliminar" data-bs-toggle="modal" data-bs-target="#confirmModal" data-id="{{ t.id }}">
+              <button class="btn btn-sm btn-outline-danger" title="Eliminar"
+                      data-bs-toggle="modal" data-bs-target="#confirmModal"
+                      data-id="{{ t.id }}">
                 <i class="bi bi-trash"></i>
               </button>
             </td>
@@ -175,48 +196,48 @@
     {% endif %}
   </div>
 
-<!-- Excel Tab -->
-<div class="tab-pane fade" id="tab-excel" role="tabpanel" aria-labelledby="excel-tab">
-  <div class="row g-4">
-    <div class="col-md-6">
-      <div class="card h-100">
-        <div class="card-body">
-          <h5 class="card-title">Transformar Excel</h5>
-          <form action="{{ url_for('subir_ventas') }}" method="POST" enctype="multipart/form-data">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <div class="mb-3">
-              <label class="form-label">Archivo Excel</label>
-              <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls" required>
-            </div>
-            <button type="submit" class="btn btn-success w-100">
-              <i class="bi bi-file-earmark-excel"></i> Transformar
-            </button>
-          </form>
+  <!-- ===================== GENERAR EXCEL ===================== -->
+  <div class="tab-pane fade" id="tab-excel" role="tabpanel" aria-labelledby="excel-tab">
+    <div class="row g-4">
+      <div class="col-md-6">
+        <div class="card h-100">
+          <div class="card-body">
+            <h5 class="card-title">Transformar Excel</h5>
+            <form action="{{ url_for('subir_ventas') }}" method="POST" enctype="multipart/form-data">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <div class="mb-3">
+                <label class="form-label">Archivo Excel</label>
+                <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls" required>
+              </div>
+              <button type="submit" class="btn btn-success w-100">
+                <i class="bi bi-file-earmark-excel"></i> Transformar
+              </button>
+            </form>
+          </div>
         </div>
       </div>
-    </div>
-    <div class="col-md-6">
-      <div class="card h-100">
-        <div class="card-body">
-          <h5 class="card-title">Clasificar Excel</h5>
-          <form action="{{ url_for('transformar_excel_clasificado') }}" method="POST" enctype="multipart/form-data">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <div class="mb-3">
-              <label class="form-label">Archivo Excel</label>
-              <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls" required>
-            </div>
-            <button type="submit" class="btn btn-primary w-100">
-              <i class="bi bi-funnel"></i> Clasificar
-            </button>
-          </form>
+
+      <div class="col-md-6">
+        <div class="card h-100">
+          <div class="card-body">
+            <h5 class="card-title">Clasificar Excel</h5>
+            <form action="{{ url_for('transformar_excel_clasificado') }}" method="POST" enctype="multipart/form-data">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <div class="mb-3">
+                <label class="form-label">Archivo Excel</label>
+                <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls" required>
+              </div>
+              <button type="submit" class="btn btn-primary w-100">
+                <i class="bi bi-funnel"></i> Clasificar
+              </button>
+            </form>
+          </div>
         </div>
       </div>
     </div>
   </div>
-</div>
 
-
-  <!-- Ventas Tab -->
+  <!-- ===================== VENTAS ===================== -->
   <div class="tab-pane fade" id="tab-ventas" role="tabpanel" aria-labelledby="ventas-tab">
     <div class="card">
       <div class="card-body">
@@ -224,7 +245,8 @@
           <h5 class="card-title mb-0">Registro de Ventas</h5>
           <div class="d-flex gap-2">
             <form method="GET" class="d-flex gap-2">
-              <input type="date" name="fecha_ventas" class="form-control" value="{{ request.args.get('fecha_ventas', '') }}">
+              <input type="date" name="fecha_ventas" class="form-control"
+                     value="{{ request.args.get('fecha_ventas', '') }}">
               <button type="submit" class="btn btn-secondary">
                 <i class="bi bi-filter"></i> Filtrar
               </button>
@@ -232,17 +254,23 @@
                 <i class="bi bi-x"></i>
               </a>
             </form>
-            <!-- Botón Eliminar todo -->
-            <form method="POST" action="{{ url_for('ventas_eliminar_todo') }}" class="d-inline ms-2" onsubmit="return confirm('¿Eliminar TODAS las ventas? Esta acción no se puede deshacer.');">
+
+            <form method="POST" action="{{ url_for('ventas_eliminar_todo') }}" class="d-inline ms-2"
+                  onsubmit="return confirm('¿Eliminar TODAS las ventas? Esta acción no se puede deshacer.');">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-outline-danger">
                 <i class="bi bi-trash3"></i> Eliminar todo
               </button>
             </form>
+
+            <!-- Exportar CSV Ventas -->
+            <button id="btn-export-ventas" class="btn btn-outline-success ms-2">
+              <i class="bi bi-file-earmark-spreadsheet"></i> Exportar CSV
+            </button>
           </div>
         </div>
 
-        <!-- Upload Forms -->
+        <!-- Uploads Ventas / HTO / Totales día -->
         <div class="row g-3 mb-4">
           <div class="col-md-6">
             <div class="card">
@@ -252,7 +280,6 @@
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <div class="mb-2">
                     <div class="input-group">
-                      <!-- Acepta Excel normal y CSV de Mercado Pago -->
                       <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls,.csv" required>
                       <button type="submit" class="btn btn-success">
                         <i class="bi bi-upload"></i>
@@ -266,27 +293,28 @@
               </div>
             </div>
           </div>
+
           <div class="col-md-6">
-  <div class="card">
-    <div class="card-body">
-      <h6 class="card-subtitle mb-2 text-muted">Subir HTO (Facturas Emitidas)</h6>
-      <form action="{{ url_for('ventas_upload_hto') }}" method="POST" enctype="multipart/form-data">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="mb-2">
-          <div class="input-group">
-            <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls" required>
-            <button type="submit" class="btn btn-primary">
-              <i class="bi bi-upload"></i>
-            </button>
+            <div class="card">
+              <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Subir HTO (Facturas Emitidas)</h6>
+                <form action="{{ url_for('ventas_upload_hto') }}" method="POST" enctype="multipart/form-data">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <div class="mb-2">
+                    <div class="input-group">
+                      <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls" required>
+                      <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-upload"></i>
+                      </button>
+                    </div>
+                    <div class="form-text">
+                      Sube aquí el Excel de HTO para complementar la información de ventas.
+                    </div>
+                  </div>
+                </form>
+              </div>
+            </div>
           </div>
-          <div class="form-text">
-            Sube aquí el Excel de HTO para complementar la información de ventas.
-          </div>
-        </div>
-      </form>
-    </div>
-  </div>
-</div>
 
           <div class="col-md-6">
             <div class="card">
@@ -304,7 +332,7 @@
           </div>
         </div>
 
-        <!-- Ventas Table Completa -->
+        <!-- Tabla Ventas -->
         {% if ventas %}
         <div class="table-responsive">
           <table class="table table-sm table-hover align-middle">
@@ -323,7 +351,6 @@
                 <th>Nom_cte</th>
                 <th>RFC</th>
                 <th>Moneda</th>
-                <!-- Campos autocompletados desde HTO -->
                 <th>UUID Factura</th>
                 <th>UUID NC</th>
                 <th>Cliente (C3)</th>
@@ -349,14 +376,17 @@
                 <td class="clip" data-bs-toggle="tooltip" title="{{ v.nom_cte or '-' }}">{{ v.nom_cte or '-' }}</td>
                 <td class="clip" data-bs-toggle="tooltip" title="{{ v.rfc_cte or '-' }}">{{ v.rfc_cte or '-' }}</td>
                 <td>{{ v.des_mon or '-' }}</td>
-                <!-- Nuevos campos HTO -->
                 <td class="clip" data-bs-toggle="tooltip" title="{{ v.uuid_factura or '-' }}">{{ v.uuid_factura or '-' }}</td>
                 <td class="clip" data-bs-toggle="tooltip" title="{{ v.uuid_nc or '-' }}">{{ v.uuid_nc or '-' }}</td>
                 <td class="clip" data-bs-toggle="tooltip" title="{{ v.cliente_1 or '-' }}">{{ v.cliente_1 or '-' }}</td>
                 <td class="clip" data-bs-toggle="tooltip" title="{{ v.forma_de_pago or '-' }}">{{ v.forma_de_pago or '-' }}</td>
                 <td class="clip" data-bs-toggle="tooltip" title="{{ v.metodo_de_pago or '-' }}">{{ v.metodo_de_pago or '-' }}</td>
                 <td class="text-end">
-                  {% if v.total_2 is not none %}${{ "%.2f"|format(v.total_2) }}{% else %}-{% endif %}
+                  {% if v.total_2 is not none %}
+                    ${{ "%.2f"|format(v.total_2) }}
+                  {% else %}
+                    -
+                  {% endif %}
                 </td>
                 <td class="clip" data-bs-toggle="tooltip" title="{{ v.pago_1 or '-' }}">{{ v.pago_1 or '-' }}</td>
               </tr>
@@ -374,8 +404,7 @@
   </div>
 </div>
 
-
-<!-- Modals -->
+<!-- Modal Subir Bancos -->
 <div class="modal fade" id="modalSubirBancos" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -403,6 +432,7 @@
   </div>
 </div>
 
+<!-- Modal Confirmar Eliminación Transferencia -->
 <div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -424,153 +454,160 @@
   </div>
 </div>
 
-<!-- JavaScript -->
 <script>
-  // Tab Persistence
-  document.addEventListener('DOMContentLoaded', function() {
-    // Activate tab from hash
-    const activateTab = (hash) => {
-      const tabEl = document.querySelector(`#dashboardTabs button[data-bs-target="${hash}"]`);
-      if (tabEl) new bootstrap.Tab(tabEl).show();
-    };
+document.addEventListener('DOMContentLoaded', function() {
+  // Activar tab por hash
+  const activateTab = (hash) => {
+    const tabEl = document.querySelector(`#dashboardTabs button[data-bs-target="${hash}"]`);
+    if (tabEl) new bootstrap.Tab(tabEl).show();
+  };
 
-    // Init/Reinit Bootstrap tooltips
-    const initTooltips = () => {
-      document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
-        const t = bootstrap.Tooltip.getInstance(el);
-        if (t) t.dispose();
-        new bootstrap.Tooltip(el, { container: 'body', boundary: document.body });
-      });
-    };
-
-    // Initial tab activation
-    if (window.location.hash) {
-      activateTab(window.location.hash);
-    }
-
-    // Update hash when tab changes
-    document.querySelectorAll('#dashboardTabs button[data-bs-toggle="tab"]').forEach(tab => {
-      tab.addEventListener('shown.bs.tab', (e) => {
-        history.replaceState(null, '', e.target.dataset.bsTarget);
-        initTooltips(); // reinit tooltips when switching tabs
-      });
+  // Tooltips
+  const initTooltips = () => {
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+      const t = bootstrap.Tooltip.getInstance(el);
+      if (t) t.dispose();
+      new bootstrap.Tooltip(el, { container: 'body', boundary: document.body });
     });
+  };
 
-    // Handle back/forward navigation
-    window.addEventListener('hashchange', () => {
-      if (window.location.hash) {
-        activateTab(window.location.hash);
+  if (window.location.hash) activateTab(window.location.hash);
+
+  document.querySelectorAll('#dashboardTabs button[data-bs-toggle="tab"]').forEach(tab => {
+    tab.addEventListener('shown.bs.tab', (e) => {
+      history.replaceState(null, '', e.target.dataset.bsTarget);
+      initTooltips();
+    });
+  });
+
+  window.addEventListener('hashchange', () => {
+    if (window.location.hash) activateTab(window.location.hash);
+  });
+
+  // Modal eliminar transferencia
+  const confirmModal = document.getElementById('confirmModal');
+  if (confirmModal) {
+    confirmModal.addEventListener('show.bs.modal', function(e) {
+      const button = e.relatedTarget;
+      const transferId = button.dataset.id;
+      document.getElementById('deleteForm').action = `/eliminar/${transferId}`;
+    });
+  }
+
+  // Totales del día ventas
+  const btnSumar = document.getElementById('btnSumarDia');
+  if (btnSumar) {
+    btnSumar.addEventListener('click', async () => {
+      const fecha = document.getElementById('sumarFecha').value;
+      const panel = document.getElementById('totalesDia');
+
+      if (!fecha) {
+        panel.innerHTML = '<div class="alert alert-warning p-2">Seleccione una fecha</div>';
+        return;
+      }
+
+      panel.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm"></div> Calculando...</div>';
+
+      try {
+        const response = await fetch(`/ventas/sumar_dia?fecha=${encodeURIComponent(fecha)}`);
+        const data = await response.json();
+
+        if (data.ok) {
+          const formatMoney = (amount) =>
+            new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(amount);
+
+          let html = `<div class="alert alert-success p-2 mb-2">
+            <strong>Total del día:</strong> ${formatMoney(data.total_dia)}
+            <br><strong>Efectivo:</strong> ${formatMoney(data.total_efectivo)}
+          </div>
+          <div class="d-flex flex-wrap gap-3">`;
+
+          for (const [categoria, monto] of Object.entries(data.desglose)) {
+            html += `<div class="flex-grow-1">
+              <div class="fw-bold">${categoria}</div>
+              <div>${formatMoney(monto)}</div>
+            </div>`;
+          }
+
+          html += '</div>';
+          panel.innerHTML = html;
+        } else {
+          panel.innerHTML = `<div class="alert alert-danger p-2">${data.msg || 'Error al calcular'}</div>`;
+        }
+      } catch (err) {
+        console.error(err);
+        panel.innerHTML = '<div class="alert alert-danger p-2">Error de conexión</div>';
       }
     });
+  }
 
-    // Delete modal handler
-    const confirmModal = document.getElementById('confirmModal');
-    if (confirmModal) {
-      confirmModal.addEventListener('show.bs.modal', function(e) {
-        const button = e.relatedTarget;
-        const transferId = button.dataset.id;
-        document.getElementById('deleteForm').action = `/eliminar/${transferId}`;
-      });
-    }
+  // Exportar CSV Transferencias
+  const btnExpTransf = document.getElementById('btn-export-transferencias');
+  if (btnExpTransf) {
+    btnExpTransf.addEventListener('click', () => {
+      window.location.href = "{{ url_for('export_transferencias_csv') }}";
+    });
+  }
 
-    // Calculate daily totals
-    const btnSumar = document.getElementById('btnSumarDia');
-    if (btnSumar) {
-      btnSumar.addEventListener('click', async () => {
-        const fecha = document.getElementById('sumarFecha').value;
-        const panel = document.getElementById('totalesDia');
-        if (!fecha) {
-          panel.innerHTML = '<div class="alert alert-warning p-2">Seleccione una fecha</div>';
-          return;
-        }
-        
-        panel.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm"></div> Calculando...</div>';
-        
-        try {
-          const response = await fetch(`/ventas/sumar_dia?fecha=${encodeURIComponent(fecha)}`);
-          const data = await response.json();
-          
-          if (data.ok) {
-            const formatMoney = (amount) => {
-              return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(amount);
-            };
-            
-            let html = `<div class="alert alert-success p-2 mb-2">
-              <strong>Total del día:</strong> ${formatMoney(data.total_dia)}
-              <br><strong>Efectivo:</strong> ${formatMoney(data.total_efectivo)}
-            </div>
-            <div class="d-flex flex-wrap gap-3">`;
-            
-            for (const [categoria, monto] of Object.entries(data.desglose)) {
-              html += `<div class="flex-grow-1">
-                <div class="fw-bold">${categoria}</div>
-                <div>${formatMoney(monto)}</div>
-              </div>`;
-            }
-            
-            html += '</div>';
-            panel.innerHTML = html;
-          } else {
-            panel.innerHTML = `<div class="alert alert-danger p-2">${data.msg || 'Error al calcular'}</div>`;
-          }
-        } catch (error) {
-          panel.innerHTML = '<div class="alert alert-danger p-2">Error de conexión</div>';
-          console.error(error);
-        }
-      });
-    }
+  // Exportar CSV Ventas
+  const btnExpVentas = document.getElementById('btn-export-ventas');
+  if (btnExpVentas) {
+    btnExpVentas.addEventListener('click', () => {
+      window.location.href = "{{ url_for('export_ventas_csv') }}";
+    });
+  }
 
-    // Inicializa tooltips en el primer render
-    initTooltips();
-  });
+  initTooltips();
+});
 </script>
 
 <style>
-  .table-responsive {
-    max-height: 65vh;
-    overflow-y: auto;
-  }
-  
-  .form-switch .form-check-input {
-    width: 2.5em;
-    height: 1.5em;
-  }
-  
-  /* Estilos para tabla de ventas completa */
-  #tab-ventas .table {
-    font-size: 0.85rem;
-  }
-  
-  #tab-ventas th {
-    white-space: nowrap;
-    position: sticky;
-    top: 0;
-    background: white;
-  }
-  
-  #tab-ventas td {
-    vertical-align: middle;
-  }
+.table-responsive {
+  max-height: 65vh;
+  overflow-y: auto;
+}
 
-  /* Celdas largas: trunca con … y muestra completo en tooltip */
+.form-switch .form-check-input {
+  width: 2.5em;
+  height: 1.5em;
+}
+
+/* Ventas tabla */
+#tab-ventas .table {
+  font-size: 0.85rem;
+}
+
+#tab-ventas th {
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: white;
+}
+
+#tab-ventas td {
+  vertical-align: middle;
+}
+
+/* Celdas con texto largo */
+#tab-ventas td.clip {
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (min-width: 1400px) {
   #tab-ventas td.clip {
-    max-width: 220px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    max-width: 300px;
   }
+}
 
-  @media (min-width: 1400px) {
-    #tab-ventas td.clip {
-      max-width: 300px;
-    }
-  }
-  
-  /* Mostrar el concepto completo con salto de línea */
-  .concepto-wrap {
-    white-space: normal; /* permite salto de línea */
-    word-break: break-word; /* corta palabras largas si es necesario */
-    max-width: 450px; /* opcional para no romper el layout */
-  }
+/* Concepto completo con saltos */
+.concepto-wrap {
+  white-space: normal;
+  word-break: break-word;
+  max-width: 450px;
+}
 </style>
 {% endblock %}
+

@@ -25,6 +25,9 @@ import traceback
 import io
 from sqlalchemy import text
 import time
+from io import StringIO
+import csv
+from flask import Response
 
 
 # Inicialización de la aplicación
@@ -1423,6 +1426,129 @@ def _vv_load_rows_from_excel() -> list:
         _VV_CACHE["rows"] = rows
         return rows
 
+@app.get("/export/transferencias.csv")
+@login_required
+def export_transferencias_csv():
+    # Trae todas las transferencias (ajusta el orden si quieres por fecha)
+    transfers = (
+        Transferencia.query
+        .order_by(Transferencia.fecha.asc(), Transferencia.id.asc())
+        .all()
+    )
+
+    si = StringIO()
+    w = csv.writer(si)
+
+    # Encabezados del CSV
+    w.writerow([
+        "FECHA",
+        "BANCO_ORIGEN",
+        "BANCO_RECEPTOR",
+        "MONTO",
+        "REFERENCIA",
+        "PEDIDO",
+        "FACTURA",
+        "CONCEPTO",
+        "REGISTRADO_POR",
+        "REGISTRADO_FLAG",
+    ])
+
+    # Filas
+    for t in transfers:
+        w.writerow([
+            t.fecha or "",
+            t.banco or "",
+            t.banco_receptor or "",
+            t.monto if t.monto is not None else "",
+            t.referencia or "",
+            t.pedido or "",
+            t.factura or "",
+            t.concepto or "",
+            t.registrado or "",
+            "Sí" if t.esta_registrado else "No",
+        ])
+
+    output = si.getvalue()
+    return Response(
+        output,
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=transferencias.csv"
+        },
+    )
+
+@app.get("/export/ventas.csv")
+@login_required
+def export_ventas_csv():
+    ventas = (
+        Venta.query
+        .order_by(Venta.fecha.asc(), Venta.id.asc())
+        .all()
+    )
+
+    si = StringIO()
+    w = csv.writer(si)
+
+    # Encabezados (puedes quitar/ordenar los que no necesites)
+    w.writerow([
+        "FECHA",
+        "CODIGO",
+        "NUM",
+        "#FACTURA",
+        "#NOTA",
+        "CONCEPTO",
+        "TIPO",
+        "SUBTIPO",
+        "CANTIDAD",
+        "CANT",
+        "USUARIO",
+        "CVE_AGE",
+        "NOM_CTE",
+        "RFC_CTE",
+        "DES_MON",
+        "UUID_FACTURA",
+        "UUID_NC",
+        "CLIENTE_1",
+        "FORMA_PAGO",
+        "METODO_PAGO",
+        "TOTAL_2",
+        "PAGO_1",
+    ])
+
+    for v in ventas:
+        w.writerow([
+            v.fecha.strftime("%d/%m/%Y") if v.fecha else "",
+            v.codigo or "",
+            v.num or "",
+            v.no_fac or "",
+            v.no_nota or "",
+            v.concepto or "",
+            v.tipo or "",
+            v.subtipo or "",
+            v.cantidad if v.cantidad is not None else "",
+            v.cant if v.cant is not None else "",
+            v.usuario or "",
+            v.cve_age or "",
+            v.nom_cte or "",
+            v.rfc_cte or "",
+            v.des_mon or "",
+            v.uuid_factura or "",
+            v.uuid_nc or "",
+            v.cliente_1 or "",
+            v.forma_de_pago or "",
+            v.metodo_de_pago or "",
+            v.total_2 if v.total_2 is not None else "",
+            v.pago_1 or "",
+        ])
+
+    output = si.getvalue()
+    return Response(
+        output,
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=ventas.csv"
+        },
+    )
 
 
 @app.get("/vv/sheets-info")
