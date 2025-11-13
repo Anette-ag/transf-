@@ -1426,108 +1426,124 @@ def _vv_load_rows_from_excel() -> list:
         _VV_CACHE["rows"] = rows
         return rows
 
-@app.get("/export/transferencias.csv")
+@app.get("/transferencias/export_csv")
 @login_required
 def export_transferencias_csv():
-    # Trae todas las transferencias (ajusta el orden si quieres por fecha)
-    transfers = (
-        Transferencia.query
-        .order_by(Transferencia.fecha.asc(), Transferencia.id.asc())
-        .all()
-    )
+    """Exporta a CSV las transferencias según los filtros actuales."""
+    # mismos filtros que el dashboard
+    referencia = request.args.get("referencia", "").strip()
+    fecha = request.args.get("fecha", "").strip()
+    banco = request.args.get("banco", "").strip()
+    banco_receptor = request.args.get("banco_receptor", "").strip()
 
+    query = Transferencia.query
+
+    if referencia:
+        query = query.filter(Transferencia.referencia.ilike(f"%{referencia}%"))
+
+    if fecha:
+        # tu campo fecha es String(20), se guarda como 'YYYY-MM-DD'
+        query = query.filter(Transferencia.fecha == fecha)
+
+    if banco:
+        query = query.filter(Transferencia.banco == banco)
+
+    if banco_receptor:
+        query = query.filter(Transferencia.banco_receptor == banco_receptor)
+
+    transferencias = query.order_by(Transferencia.fecha, Transferencia.id).all()
+
+    # Construir CSV en memoria
     si = StringIO()
-    w = csv.writer(si)
+    cw = csv.writer(si)
 
-    # Encabezados del CSV
-    w.writerow([
-        "FECHA",
-        "BANCO_ORIGEN",
-        "BANCO_RECEPTOR",
-        "MONTO",
-        "REFERENCIA",
-        "PEDIDO",
-        "FACTURA",
-        "CONCEPTO",
-        "REGISTRADO_POR",
-        "REGISTRADO_FLAG",
+    # Encabezados
+    cw.writerow([
+        "fecha",
+        "banco",
+        "banco_receptor",
+        "monto",
+        "referencia",
+        "concepto",
+        "pedido",
+        "factura",
+        "registrado_por",
+        "esta_registrado",
     ])
 
     # Filas
-    for t in transfers:
-        w.writerow([
+    for t in transferencias:
+        cw.writerow([
             t.fecha or "",
             t.banco or "",
             t.banco_receptor or "",
-            t.monto if t.monto is not None else "",
+            f"{t.monto:.2f}" if t.monto is not None else "",
             t.referencia or "",
+            t.concepto or "",
             t.pedido or "",
             t.factura or "",
-            t.concepto or "",
             t.registrado or "",
             "Sí" if t.esta_registrado else "No",
         ])
 
     output = si.getvalue()
+    si.close()
+
+    # Nombre del archivo: si hay banco/fecha, lo usamos en el nombre
+    parts = ["transferencias"]
+    if banco:
+        parts.append(banco.replace(" ", "_"))
+    if banco_receptor:
+        parts.append(f"REC_{banco_receptor.replace(' ', '_')}")
+    if fecha:
+        parts.append(fecha)
+    filename = "_".join(parts) + ".csv"
+
     return Response(
         output,
         mimetype="text/csv",
         headers={
-            "Content-Disposition": "attachment; filename=transferencias.csv"
+            "Content-Disposition": f"attachment; filename={filename}"
         },
     )
 
-@app.get("/export/ventas.csv")
+
+@app.get("/ventas/export_csv")
 @login_required
 def export_ventas_csv():
-    ventas = (
-        Venta.query
-        .order_by(Venta.fecha.asc(), Venta.id.asc())
-        .all()
-    )
+    fecha_str = request.args.get("fecha_ventas", "").strip()
+    q = Venta.query
+    if fecha_str:
+        try:
+            from datetime import datetime
+            fecha = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+            q = q.filter(Venta.fecha == fecha)
+        except ValueError:
+            pass
 
+    ventas = q.order_by(Venta.fecha.asc().nulls_last()).all()
+
+    import csv
+    from io import StringIO
     si = StringIO()
-    w = csv.writer(si)
-
-    # Encabezados (puedes quitar/ordenar los que no necesites)
-    w.writerow([
-        "FECHA",
-        "CODIGO",
-        "NUM",
-        "#FACTURA",
-        "#NOTA",
-        "CONCEPTO",
-        "TIPO",
-        "SUBTIPO",
-        "CANTIDAD",
-        "CANT",
-        "USUARIO",
-        "CVE_AGE",
-        "NOM_CTE",
-        "RFC_CTE",
-        "DES_MON",
-        "UUID_FACTURA",
-        "UUID_NC",
-        "CLIENTE_1",
-        "FORMA_PAGO",
-        "METODO_PAGO",
-        "TOTAL_2",
-        "PAGO_1",
+    cw = csv.writer(si)
+    cw.writerow([
+        "fecha","codigo","num","no_fac","no_nota","tipo","subtipo",
+        "cantidad","cant","cve_age","nom_cte","rfc_cte","des_mon",
+        "uuid_factura","uuid_nc","cliente_1","forma_de_pago",
+        "metodo_de_pago","total_2","pago_1"
     ])
-
     for v in ventas:
-        w.writerow([
-            v.fecha.strftime("%d/%m/%Y") if v.fecha else "",
+        cw.writerow([
+            v.fecha.isoformat() if v.fecha else "",
             v.codigo or "",
             v.num or "",
             v.no_fac or "",
             v.no_nota or "",
-            v.concepto or "",
             v.tipo or "",
             v.subtipo or "",
-            v.cantidad if v.cantidad is not None else "",
-            v.cant if v.cant is not None else "",
-            v.usuario or "",
+            v.cantidad or 0,
+            v.cant or 0,
             v.cve_age or "",
             v.nom_cte or "",
             v.rfc_cte or "",
@@ -1537,18 +1553,20 @@ def export_ventas_csv():
             v.cliente_1 or "",
             v.forma_de_pago or "",
             v.metodo_de_pago or "",
-            v.total_2 if v.total_2 is not None else "",
+            v.total_2 or 0,
             v.pago_1 or "",
         ])
 
+    from flask import Response
     output = si.getvalue()
     return Response(
         output,
         mimetype="text/csv",
         headers={
-            "Content-Disposition": "attachment; filename=ventas.csv"
+            "Content-Disposition": f"attachment; filename=ventas_{fecha_str or 'todas'}.csv"
         },
     )
+
 
 
 @app.get("/vv/sheets-info")

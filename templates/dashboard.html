@@ -56,10 +56,17 @@
       </a>
       {% endif %}
 
-      <!-- Exportar CSV Transferencias -->
-      <button id="btn-export-transferencias" class="btn btn-outline-success">
+      <!-- Exportar CSV Transferencias (respetando filtros actuales) -->
+      <a
+        href="{{ url_for('export_transferencias_csv',
+                         referencia=request.args.get('referencia',''),
+                         fecha=request.args.get('fecha',''),
+                         banco=request.args.get('banco',''),
+                         banco_receptor=request.args.get('banco_receptor','')) }}"
+        class="btn btn-outline-success"
+      >
         <i class="bi bi-file-earmark-spreadsheet"></i> Exportar CSV
-      </button>
+      </a>
 
       <a href="{{ url_for('logout') }}" class="btn btn-outline-secondary ms-auto">
         <i class="bi bi-box-arrow-right"></i> Salir
@@ -236,170 +243,171 @@
       </div>
     </div>
   </div>
+</div>
 
-  <!-- ===================== VENTAS ===================== -->
-  <div class="tab-pane fade" id="tab-ventas" role="tabpanel" aria-labelledby="ventas-tab">
-    <div class="card">
-      <div class="card-body">
-        <div class="d-flex flex-wrap justify-content-between align-items-center mb-4">
-          <h5 class="card-title mb-0">Registro de Ventas</h5>
-          <div class="d-flex gap-2">
-            <form method="GET" class="d-flex gap-2">
-              <input type="date" name="fecha_ventas" class="form-control"
-                     value="{{ request.args.get('fecha_ventas', '') }}">
-              <button type="submit" class="btn btn-secondary">
-                <i class="bi bi-filter"></i> Filtrar
-              </button>
-              <a href="{{ url_for('dashboard') }}#tab-ventas" class="btn btn-outline-secondary">
-                <i class="bi bi-x"></i>
-              </a>
-            </form>
 
-            <form method="POST" action="{{ url_for('ventas_eliminar_todo') }}" class="d-inline ms-2"
-                  onsubmit="return confirm('¿Eliminar TODAS las ventas? Esta acción no se puede deshacer.');">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn btn-outline-danger">
-                <i class="bi bi-trash3"></i> Eliminar todo
-              </button>
-            </form>
-
-            <!-- Exportar CSV Ventas -->
-            <button id="btn-export-ventas" class="btn btn-outline-success ms-2">
-              <i class="bi bi-file-earmark-spreadsheet"></i> Exportar CSV
+<!-- ===================== VENTAS ===================== -->
+<div class="tab-pane fade" id="tab-ventas" role="tabpanel" aria-labelledby="ventas-tab">
+  <div class="card">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between align-items-center mb-4">
+        <h5 class="card-title mb-0">Registro de Ventas</h5>
+        <div class="d-flex gap-2">
+          <form method="GET" class="d-flex gap-2">
+            <input type="date" name="fecha_ventas" class="form-control"
+                   value="{{ request.args.get('fecha_ventas', '') }}">
+            <button type="submit" class="btn btn-secondary">
+              <i class="bi bi-filter"></i> Filtrar
             </button>
-          </div>
-        </div>
+            <a href="{{ url_for('dashboard') }}#tab-ventas" class="btn btn-outline-secondary">
+              <i class="bi bi-x"></i>
+            </a>
+          </form>
 
-        <!-- Uploads Ventas / HTO / Totales día -->
-        <div class="row g-3 mb-4">
-          <div class="col-md-6">
-            <div class="card">
-              <div class="card-body">
-                <h6 class="card-subtitle mb-2 text-muted">Subir Ventas</h6>
-                <form action="{{ url_for('subir_ventas') }}" method="POST" enctype="multipart/form-data">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <div class="mb-2">
-                    <div class="input-group">
-                      <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls,.csv" required>
-                      <button type="submit" class="btn btn-success">
-                        <i class="bi bi-upload"></i>
-                      </button>
-                    </div>
-                    <div class="form-text">
-                      Puedes subir tu Excel de ventas (.xlsx/.csv).
-                    </div>
-                  </div>
-                </form>
-              </div>
-            </div>
-          </div>
+          <form method="POST" action="{{ url_for('ventas_eliminar_todo') }}" class="d-inline ms-2"
+                onsubmit="return confirm('¿Eliminar TODAS las ventas? Esta acción no se puede deshacer.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-danger">
+              <i class="bi bi-trash3"></i> Eliminar todo
+            </button>
+          </form>
 
-          <div class="col-md-6">
-            <div class="card">
-              <div class="card-body">
-                <h6 class="card-subtitle mb-2 text-muted">Subir HTO (Facturas Emitidas)</h6>
-                <form action="{{ url_for('ventas_upload_hto') }}" method="POST" enctype="multipart/form-data">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <div class="mb-2">
-                    <div class="input-group">
-                      <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls" required>
-                      <button type="submit" class="btn btn-primary">
-                        <i class="bi bi-upload"></i>
-                      </button>
-                    </div>
-                    <div class="form-text">
-                      Sube aquí el Excel de HTO para complementar la información de ventas.
-                    </div>
-                  </div>
-                </form>
-              </div>
-            </div>
-          </div>
-
-          <div class="col-md-6">
-            <div class="card">
-              <div class="card-body">
-                <h6 class="card-subtitle mb-2 text-muted">Totales del Día</h6>
-                <div class="input-group">
-                  <input type="date" id="sumarFecha" class="form-control">
-                  <button id="btnSumarDia" class="btn btn-info">
-                    <i class="bi bi-calculator"></i> Calcular
-                  </button>
-                </div>
-                <div id="totalesDia" class="mt-2 small"></div>
-              </div>
-            </div>
-          </div>
+          <!-- Exportar CSV Ventas -->
+          <button id="btn-export-ventas" class="btn btn-outline-success ms-2">
+            <i class="bi bi-file-earmark-spreadsheet"></i> Exportar CSV
+          </button>
         </div>
-
-        <!-- Tabla Ventas -->
-        {% if ventas %}
-        <div class="table-responsive">
-          <table class="table table-sm table-hover align-middle">
-            <thead class="table-light">
-              <tr>
-                <th>Código</th>
-                <th>Num</th>
-                <th># Factura</th>
-                <th>Fecha</th>
-                <th class="text-end">Cantidad</th>
-                <th>Tipo</th>
-                <th>No_nota</th>
-                <th>Subtipo</th>
-                <th class="text-end">Cant</th>
-                <th>Cve_age</th>
-                <th>Nom_cte</th>
-                <th>RFC</th>
-                <th>Moneda</th>
-                <th>UUID Factura</th>
-                <th>UUID NC</th>
-                <th>Cliente (C3)</th>
-                <th>Forma de pago (C3)</th>
-                <th>Método de pago (C3)</th>
-                <th class="text-end">Total (C3)</th>
-                <th>Pago</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for v in ventas %}
-              <tr>
-                <td class="clip" data-bs-toggle="tooltip" title="{{ v.codigo or '-' }}">{{ v.codigo or '-' }}</td>
-                <td>{{ v.num or '-' }}</td>
-                <td>{{ v.no_fac or '-' }}</td>
-                <td>{{ v.fecha.strftime('%d/%m/%Y') if v.fecha else '-' }}</td>
-                <td class="text-end">${{ "%.2f"|format(v.cantidad or 0) }}</td>
-                <td class="clip" data-bs-toggle="tooltip" title="{{ v.tipo or '-' }}">{{ v.tipo or '-' }}</td>
-                <td class="clip" data-bs-toggle="tooltip" title="{{ v.no_nota or '-' }}">{{ v.no_nota or '-' }}</td>
-                <td class="clip" data-bs-toggle="tooltip" title="{{ v.subtipo or '-' }}">{{ v.subtipo or '-' }}</td>
-                <td class="text-end">${{ "%.2f"|format(v.cant or 0) }}</td>
-                <td>{{ v.cve_age or '-' }}</td>
-                <td class="clip" data-bs-toggle="tooltip" title="{{ v.nom_cte or '-' }}">{{ v.nom_cte or '-' }}</td>
-                <td class="clip" data-bs-toggle="tooltip" title="{{ v.rfc_cte or '-' }}">{{ v.rfc_cte or '-' }}</td>
-                <td>{{ v.des_mon or '-' }}</td>
-                <td class="clip" data-bs-toggle="tooltip" title="{{ v.uuid_factura or '-' }}">{{ v.uuid_factura or '-' }}</td>
-                <td class="clip" data-bs-toggle="tooltip" title="{{ v.uuid_nc or '-' }}">{{ v.uuid_nc or '-' }}</td>
-                <td class="clip" data-bs-toggle="tooltip" title="{{ v.cliente_1 or '-' }}">{{ v.cliente_1 or '-' }}</td>
-                <td class="clip" data-bs-toggle="tooltip" title="{{ v.forma_de_pago or '-' }}">{{ v.forma_de_pago or '-' }}</td>
-                <td class="clip" data-bs-toggle="tooltip" title="{{ v.metodo_de_pago or '-' }}">{{ v.metodo_de_pago or '-' }}</td>
-                <td class="text-end">
-                  {% if v.total_2 is not none %}
-                    ${{ "%.2f"|format(v.total_2) }}
-                  {% else %}
-                    -
-                  {% endif %}
-                </td>
-                <td class="clip" data-bs-toggle="tooltip" title="{{ v.pago_1 or '-' }}">{{ v.pago_1 or '-' }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% else %}
-        <div class="alert alert-info">
-          No hay ventas registradas con los filtros actuales.
-        </div>
-        {% endif %}
       </div>
+
+      <!-- Uploads Ventas / HTO / Totales día -->
+      <div class="row g-3 mb-4">
+        <div class="col-md-6">
+          <div class="card">
+            <div class="card-body">
+              <h6 class="card-subtitle mb-2 text-muted">Subir Ventas</h6>
+              <form action="{{ url_for('subir_ventas') }}" method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="mb-2">
+                  <div class="input-group">
+                    <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls,.csv" required>
+                    <button type="submit" class="btn btn-success">
+                      <i class="bi bi-upload"></i>
+                    </button>
+                  </div>
+                  <div class="form-text">
+                    Puedes subir tu Excel de ventas (.xlsx/.csv).
+                  </div>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-md-6">
+          <div class="card">
+            <div class="card-body">
+              <h6 class="card-subtitle mb-2 text-muted">Subir HTO (Facturas Emitidas)</h6>
+              <form action="{{ url_for('ventas_upload_hto') }}" method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="mb-2">
+                  <div class="input-group">
+                    <input type="file" name="archivo_excel" class="form-control" accept=".xlsx,.xls" required>
+                    <button type="submit" class="btn btn-primary">
+                      <i class="bi bi-upload"></i>
+                    </button>
+                  </div>
+                  <div class="form-text">
+                    Sube aquí el Excel de HTO para complementar la información de ventas.
+                  </div>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-md-6">
+          <div class="card">
+            <div class="card-body">
+              <h6 class="card-subtitle mb-2 text-muted">Totales del Día</h6>
+              <div class="input-group">
+                <input type="date" id="sumarFecha" class="form-control">
+                <button id="btnSumarDia" class="btn btn-info">
+                  <i class="bi bi-calculator"></i> Calcular
+                </button>
+              </div>
+              <div id="totalesDia" class="mt-2 small"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabla Ventas -->
+      {% if ventas %}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Código</th>
+              <th>Num</th>
+              <th># Factura</th>
+              <th>Fecha</th>
+              <th class="text-end">Cantidad</th>
+              <th>Tipo</th>
+              <th>No_nota</th>
+              <th>Subtipo</th>
+              <th class="text-end">Cant</th>
+              <th>Cve_age</th>
+              <th>Nom_cte</th>
+              <th>RFC</th>
+              <th>Moneda</th>
+              <th>UUID Factura</th>
+              <th>UUID NC</th>
+              <th>Cliente (C3)</th>
+              <th>Forma de pago (C3)</th>
+              <th>Método de pago (C3)</th>
+              <th class="text-end">Total (C3)</th>
+              <th>Pago</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for v in ventas %}
+            <tr>
+              <td class="clip" data-bs-toggle="tooltip" title="{{ v.codigo or '-' }}">{{ v.codigo or '-' }}</td>
+              <td>{{ v.num or '-' }}</td>
+              <td>{{ v.no_fac or '-' }}</td>
+              <td>{{ v.fecha.strftime('%d/%m/%Y') if v.fecha else '-' }}</td>
+              <td class="text-end">${{ "%.2f"|format(v.cantidad or 0) }}</td>
+              <td class="clip" data-bs-toggle="tooltip" title="{{ v.tipo or '-' }}">{{ v.tipo or '-' }}</td>
+              <td class="clip" data-bs-toggle="tooltip" title="{{ v.no_nota or '-' }}">{{ v.no_nota or '-' }}</td>
+              <td class="clip" data-bs-toggle="tooltip" title="{{ v.subtipo or '-' }}">{{ v.subtipo or '-' }}</td>
+              <td class="text-end">${{ "%.2f"|format(v.cant or 0) }}</td>
+              <td>{{ v.cve_age or '-' }}</td>
+              <td class="clip" data-bs-toggle="tooltip" title="{{ v.nom_cte or '-' }}">{{ v.nom_cte or '-' }}</td>
+              <td class="clip" data-bs-toggle="tooltip" title="{{ v.rfc_cte or '-' }}">{{ v.rfc_cte or '-' }}</td>
+              <td>{{ v.des_mon or '-' }}</td>
+              <td class="clip" data-bs-toggle="tooltip" title="{{ v.uuid_factura or '-' }}">{{ v.uuid_factura or '-' }}</td>
+              <td class="clip" data-bs-toggle="tooltip" title="{{ v.uuid_nc or '-' }}">{{ v.uuid_nc or '-' }}</td>
+              <td class="clip" data-bs-toggle="tooltip" title="{{ v.cliente_1 or '-' }}">{{ v.cliente_1 or '-' }}</td>
+              <td class="clip" data-bs-toggle="tooltip" title="{{ v.forma_de_pago or '-' }}">{{ v.forma_de_pago or '-' }}</td>
+              <td class="clip" data-bs-toggle="tooltip" title="{{ v.metodo_de_pago or '-' }}">{{ v.metodo_de_pago or '-' }}</td>
+              <td class="text-end">
+                {% if v.total_2 is not none %}
+                  ${{ "%.2f"|format(v.total_2) }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td class="clip" data-bs-toggle="tooltip" title="{{ v.pago_1 or '-' }}">{{ v.pago_1 or '-' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="alert alert-info">
+        No hay ventas registradas con los filtros actuales.
+      </div>
+      {% endif %}
     </div>
   </div>
 </div>
@@ -549,17 +557,24 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
-  // Exportar CSV Ventas
+  // Exportar CSV Ventas (con fecha_ventas si está seleccionada)
   const btnExpVentas = document.getElementById('btn-export-ventas');
   if (btnExpVentas) {
     btnExpVentas.addEventListener('click', () => {
-      window.location.href = "{{ url_for('export_ventas_csv') }}";
+      const inputFecha = document.querySelector('input[name="fecha_ventas"]');
+      const fecha = inputFecha ? inputFecha.value : '';
+      let url = "{{ url_for('export_ventas_csv') }}";
+      if (fecha) {
+        url += `?fecha_ventas=${encodeURIComponent(fecha)}`;
+      }
+      window.location.href = url;
     });
   }
 
   initTooltips();
 });
 </script>
+
 
 <style>
 .table-responsive {
