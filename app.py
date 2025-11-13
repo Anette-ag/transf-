@@ -1489,6 +1489,9 @@ def export_transferencias_csv():
     output = si.getvalue()
     si.close()
 
+    # 🔹 Agregar BOM UTF-8 para que Excel detecte bien los acentos
+    output = '\ufeff' + output
+
     # Nombre del archivo: si hay banco/fecha, lo usamos en el nombre
     parts = ["transferencias"]
     if banco:
@@ -1506,6 +1509,7 @@ def export_transferencias_csv():
             "Content-Disposition": f"attachment; filename={filename}"
         },
     )
+
 
 
 @app.get("/ventas/export_csv")
