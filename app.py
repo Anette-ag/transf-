@@ -2113,6 +2113,7 @@ class Transferencia(db.Model):
     pedido = db.Column(db.String(100))
     factura = db.Column(db.String(100))
     registrado = db.Column(db.String(50))
+    vendedor_registro = db.Column(db.String(100))
     esta_registrado = db.Column(db.Boolean, default=False)
     concepto = db.Column(db.String(200))
 
@@ -3283,8 +3284,10 @@ def editar(id):
     if request.method == 'POST':
         transferencia.pedido = request.form['pedido']
         transferencia.factura = request.form['factura']
+        transferencia.vendedor_registro = request.form.get('vendedor_registro', '').strip()
         transferencia.esta_registrado = 'esta_registrado' in request.form
         transferencia.registrado = request.form['registrado']
+        
         db.session.commit()
         flash("Transferencia actualizada correctamente.")
         return redirect(url_for('dashboard'))
@@ -3293,6 +3296,7 @@ def editar(id):
 
 @app.route('/eliminar/<int:id>', methods=['POST'])
 @login_required
+@admin_required
 def eliminar(id):
     t = Transferencia.query.get_or_404(id)
     db.session.delete(t)
@@ -3302,6 +3306,7 @@ def eliminar(id):
 
 @app.route('/eliminar-todas', methods=['POST'])
 @login_required
+@admin_required
 def eliminar_todas():
     Transferencia.query.delete()
     db.session.commit()
@@ -3322,12 +3327,16 @@ def registro():
     if request.method == 'POST':
         ref = request.form['referencia']
         existente = Transferencia.query.filter_by(referencia=ref).first()
+
         if existente:
             flash("Ya existe una transferencia con esa referencia.", 'error')
         else:
+            banco_receptor = request.form.get('banco_receptor', '').strip() or 'Desconocido'
+
             t = Transferencia(
                 fecha=request.form['fecha'],
                 banco=request.form['banco'],
+                banco_receptor=request.form.get('banco_receptor', '').strip() or 'Desconocido',
                 monto=float(str(request.form['monto']).replace(',', '').strip() or 0),
                 referencia=ref,
                 pedido=request.form['pedido'],
@@ -3336,13 +3345,14 @@ def registro():
                 esta_registrado='esta_registrado' in request.form,
                 concepto=request.form.get('concepto', '')
             )
+
             db.session.add(t)
             db.session.commit()
             flash("Transferencia registrada correctamente.", 'success')
             return redirect(url_for('dashboard'))
-    
-    # Pasa datetime al contexto de la plantilla
+
     return render_template('registro.html', datetime=datetime)
+
 
 @app.route('/subir-archivo', methods=['GET', 'POST'])
 @login_required

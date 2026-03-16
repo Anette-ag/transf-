@@ -17,21 +17,25 @@
   {% endwith %}
 
   <form method="post" action="{{ url_for('registro') }}" class="border p-4 rounded bg-light">
-    <!-- Token CSRF (IMPORTANTE) -->
+    <!-- Token CSRF -->
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     
-    <!-- Campo oculto para usuario -->
+    <!-- Usuario logueado -->
     <input type="hidden" name="registrado" value="{{ current_user.username }}">
 
     <div class="row g-3">
       <div class="col-md-6">
         <label class="form-label">Fecha</label>
-        <input name="fecha" type="date" class="form-control" required 
-               max="{{ datetime.now().strftime('%Y-%m-%d') }}">
+        <input
+          name="fecha"
+          type="date"
+          class="form-control"
+          required
+          max="{{ datetime.now().strftime('%Y-%m-%d') }}">
       </div>
 
       <div class="col-md-6">
-        <label class="form-label">Banco</label>
+        <label class="form-label">Banco emisor</label>
         <select name="banco" class="form-select" required>
           <option value="">Selecciona un banco</option>
           <option value="BBVA">BBVA</option>
@@ -42,15 +46,38 @@
       </div>
 
       <div class="col-md-6">
+        <label class="form-label">Banco receptor</label>
+        <select name="banco_receptor" class="form-select" required>
+          <option value="">Selecciona un banco receptor</option>
+          <option value="BBVA">BBVA</option>
+          <option value="BANAMEX">BANAMEX</option>
+          <option value="SANTANDER">SANTANDER</option>
+          <option value="Mercado Pago">Mercado Pago</option>
+          <option value="Desconocido">Desconocido</option>
+        </select>
+      </div>
+
+      <div class="col-md-6">
         <label class="form-label">Monto</label>
-        <input name="monto" type="number" step="0.01" min="0.01" class="form-control" 
-               required placeholder="0.00">
+        <input
+          name="monto"
+          type="number"
+          step="0.01"
+          min="0.01"
+          class="form-control"
+          required
+          placeholder="0.00">
       </div>
 
       <div class="col-md-6">
         <label class="form-label">Referencia</label>
-        <input name="referencia" type="text" class="form-control" 
-               required pattern=".{8,}" title="Mínimo 8 caracteres">
+        <input
+          name="referencia"
+          type="text"
+          class="form-control"
+          required
+          pattern=".{8,}"
+          title="Mínimo 8 caracteres">
       </div>
 
       <div class="col-md-6">

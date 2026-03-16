@@ -17,31 +17,58 @@
   {% endwith %}
 
   <form method="post" action="{{ url_for('editar', id=t.id) }}" class="border p-4 rounded bg-light">
-    <!-- Token CSRF (IMPORTANTE) -->
+    <!-- Token CSRF -->
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
     <div class="row g-3">
       <div class="col-md-6">
         <label class="form-label">Pedido</label>
-        <input name="pedido" type="text" class="form-control" value="{{ t.pedido or '' }}"
-               placeholder="Número de pedido">
+        <input
+          name="pedido"
+          type="text"
+          class="form-control"
+          value="{{ t.pedido or '' }}"
+          placeholder="Número de pedido">
       </div>
 
       <div class="col-md-6">
         <label class="form-label">Factura</label>
-        <input name="factura" type="text" class="form-control" value="{{ t.factura or '' }}"
-               placeholder="Número de factura">
+        <input
+          name="factura"
+          type="text"
+          class="form-control"
+          value="{{ t.factura or '' }}"
+          placeholder="Número de factura">
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Vendedor que registró la transferencia</label>
+        <input
+          name="vendedor_registro"
+          type="text"
+          class="form-control"
+          value="{{ t.vendedor_registro or '' }}"
+          placeholder="Nombre del vendedor">
       </div>
 
       <div class="col-md-6">
         <label class="form-label">Registrado por</label>
-        <input name="registrado" type="text" class="form-control" value="{{ t.registrado }}" readonly>
+        <input
+          name="registrado"
+          type="text"
+          class="form-control"
+          value="{{ t.registrado or '' }}"
+          readonly>
       </div>
 
       <div class="col-md-6">
         <div class="form-check form-switch pt-4">
-          <input class="form-check-input" type="checkbox" name="esta_registrado" id="registradoCheck"
-                 {% if t.esta_registrado %}checked{% endif %}>
+          <input
+            class="form-check-input"
+            type="checkbox"
+            name="esta_registrado"
+            id="registradoCheck"
+            {% if t.esta_registrado %}checked{% endif %}>
           <label class="form-check-label" for="registradoCheck">
             Registrado en contabilidad
           </label>
